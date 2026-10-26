@@ -10,7 +10,7 @@
 # 환경변수: ROVER_IMAGE  ROVER_MAP(호스트 지도 폴더)  ROVER_HEADLESS=1(rviz 없이)  ROVER_VEHICLE  ROVER_SENSOR
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"  # 심링크(~/.local/bin/rover)로 불러도 fork 루트
 IMAGE="${ROVER_IMAGE:-ghcr.io/autowarefoundation/autoware:universe-cuda-jazzy}"
 MAP_HOST="${ROVER_MAP:-$HOME/autoware_data/maps/sample-map-planning}"
 VEHICLE="${ROVER_VEHICLE:-rtst_rover}"
@@ -64,7 +64,7 @@ psim_up() {
     if docker logs "$PSIM" 2>&1 | grep -q "\[rviz2-[0-9]*\]: process started\|rviz2.*Stereo is\|simple_planning_simulator.*process started"; then break; fi
   done
   sleep 8
-  local died; died="$(docker logs "$PSIM" 2>&1 | grep -o '\[ERROR\] \[[^]]*\]: process has died' | sort -u | wc -l)"
+  local died; died="$(docker logs "$PSIM" 2>&1 | { grep -o '\[ERROR\] \[[^]]*\]: process has died' || true; } | sort -u | wc -l)"  # grep 무결과(=정상)가 pipefail 로 스크립트를 죽이지 않게
   if [ "$died" = 0 ]; then ok "노드 전부 생존" "$(docker exec "$PSIM" bash -c "$SRC; ros2 node list 2>/dev/null | wc -l") 노드"
   else bad "죽은 프로세스 ${died}종" "rover psim logs"; fi
   echo "  다음: RViz 2D Pose Estimate → 2D Goal Pose(같은 차선·진행 방향) → AUTO"
@@ -74,12 +74,13 @@ psim_logs() {
   exists || die "psim 미실행"
   if [ "${1:-}" = -f ]; then docker logs -f "$PSIM"; return; fi
   docker logs "$PSIM" 2>&1 | grep -n "\[ERROR\]\|process has died\|Failed to plan\|Failed to find a proper route\|start lane ids\|goal lane id\|Setting goal pose\|Setting estimate pose" \
-    | grep -v "Mode path not found\|has not received. Set ERROR\|VehicleCmdFilter" | cut -c1-200 | tail -40
+    | grep -v "Mode path not found\|has not received. Set ERROR\|VehicleCmdFilter" | cut -c1-200 | tail -40 || true
 }
 psim_check() {
   running || die "psim 미실행"
   docker exec "$PSIM" bash -c "$SRC
     echo '--- robot_description 패키지 경로:'; ros2 param get /robot_state_publisher robot_description 2>/dev/null | grep -o 'package://[a-z_0-9]*/' | sort -u | sed 's/^/  /'
+    echo '--- 차량 mesh:'; ros2 param get /robot_state_publisher robot_description 2>/dev/null | grep -o 'package://rtst_rover_description/[^\\\"]*' | sed 's/^/  /'
     echo '--- TF base_link → 센서 (xyz):'
     for f in sensor_kit_base_link rs_helios_top rs_bpearl_front camera0/camera_link gnss_link; do
       printf '  %-22s ' \$f; timeout 4 ros2 run tf2_ros tf2_echo base_link \$f 2>&1 | grep -m1 Translation || echo '(없음)'; done
