@@ -82,7 +82,7 @@ psim_check() {
     echo '--- robot_description 패키지 경로:'; ros2 param get /robot_state_publisher robot_description 2>/dev/null | grep -o 'package://[a-z_0-9]*/' | sort -u | sed 's/^/  /'
     echo '--- 차량 mesh:'; ros2 param get /robot_state_publisher robot_description 2>/dev/null | grep -o 'package://rtst_rover_description/[^\\\"]*' | sed 's/^/  /'
     echo '--- TF base_link → 센서 (xyz):'
-    for f in sensor_kit_base_link rs_helios_top rs_bpearl_front camera0/camera_link gnss_link; do
+    for f in sensor_kit_base_link lidar_frame imu_link camera_link rs_helios_top; do
       printf '  %-22s ' \$f; timeout 4 ros2 run tf2_ros tf2_echo base_link \$f 2>&1 | grep -m1 Translation || echo '(없음)'; done
     echo '--- simple_planning_simulator 가 받은 값:'
     for p in vehicle_model_type wheel_base wheel_tread max_steer_angle vel_lim steer_lim acc_time_delay steer_time_delay; do
