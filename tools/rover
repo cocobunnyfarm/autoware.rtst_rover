@@ -5,6 +5,7 @@
 #   rover psim down | restart        종료 / 재기동 (yaml·xacro 고친 뒤)
 #   rover psim logs [-f]             [ERROR]·죽은 프로세스·route 실패만 추림. -f 는 원본 follow
 #   rover psim check                 로드된 차량·센서킷 실측 (패키지 경로, TF, 시뮬 파라미터)
+#   rover psim watch                 주행 중 0.5 s 마다 한 줄: 시나리오·기어·모드·속도·조향·횡/yaw 오차·검증기 (Ctrl-C 종료)
 #   rover shell                      실행 중 컨테이너에 bash (setup.bash 소싱 완료 상태)
 #   rover carla … | real … | dds …   자리만 (ST-2 / 실차 때 채움)
 # 환경변수: ROVER_IMAGE  ROVER_MAP(호스트 지도 폴더)  ROVER_HEADLESS=1(rviz 없이)  ROVER_VEHICLE  ROVER_SENSOR
@@ -103,8 +104,9 @@ cmd_psim() {
   case "${1:-}" in
     up) shift; psim_up "$@";; down) psim_down;; restart) psim_down; shift; psim_up "$@";;
     logs) shift; psim_logs "$@";; check) psim_check;;
+    watch) running || die "psim 미실행"; docker exec -it "$PSIM" bash -c "$SRC; exec python3 /ws/tools/psim_watch.py";;
     goal|pose|auto) die "psim $1: 아직 없음 (RViz 없이 초기위치·goal·AUTO — 회귀 테스트 때 추가)";;
-    *) die "rover psim up|down|restart|logs [-f]|check";;
+    *) die "rover psim up|down|restart|logs [-f]|check|watch";;
   esac
 }
 cmd_shell() { running || die "psim 미실행 — rover psim up"; docker exec -it "$PSIM" bash -c "$SRC; exec bash"; }
