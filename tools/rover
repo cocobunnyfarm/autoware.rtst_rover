@@ -87,6 +87,10 @@ psim_check() {
     echo '--- simple_planning_simulator 가 받은 값:'
     for p in vehicle_model_type wheel_base wheel_tread max_steer_angle vel_lim steer_lim acc_time_delay steer_time_delay; do
       printf '  %-18s ' \$p; ros2 param get /simulation/simple_planning_simulator \$p 2>/dev/null | sed 's/.*value is: //' || echo '?'; done
+    echo '--- 플래닝 (autoware_planning_config/config/scenario_planning/common/common.param.yaml → velocity_smoother):'
+    printf '  config 패키지 출처  '; ros2 pkg prefix autoware_planning_config 2>/dev/null | sed 's|/opt/autoware/.*|& (이미지 사본 — fork yaml 미반영)|; s|/ws/install/.*|& (우리 오버레이 — fork yaml 반영)|'
+    for p in max_vel normal.max_acc normal.min_acc normal.max_jerk; do
+      printf '  %-18s ' \$p; ros2 param get /planning/scenario_planning/velocity_smoother \$p 2>/dev/null | sed 's/.*value is: //' || echo '?'; done
     echo '--- 상태:'
     printf '  노드 수 '; ros2 node list 2>/dev/null | wc -l
     printf '  routing  state='; timeout 3 ros2 topic echo /api/routing/state --once --field state 2>/dev/null | head -1 | tr -d '\n'; echo '  (1 UNSET, 2 SET, 3 ARRIVED, 4 CHANGING)'
