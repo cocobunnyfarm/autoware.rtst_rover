@@ -38,7 +38,7 @@ cmd_build() {
     source /opt/autoware/setup.bash
     colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release --packages-select $pkgs 2>&1 \
       | grep -v -e '^\[entrypoint\]' -e 'haven.t been built' -e '^- ' -e 'being used from' -e 'packages-ignore' -e 'suppress this warning'"
-  printf "  install/: "; ls "$ROOT/install" | grep rtst | paste -sd' '; echo
+  printf "  install/ 오버레이 패키지: "; ls "$ROOT/install" | grep -v -e "^_" -e "^COLCON" -e "setup\." | paste -sd' '; echo
 }
 
 psim_up() {
