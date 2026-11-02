@@ -7,6 +7,7 @@
 #   rover psim check                 로드된 차량·센서킷 실측 (패키지 경로, TF, 시뮬 파라미터)
 #   rover psim watch                 주행 중 0.5 s 마다 한 줄: 시나리오·기어·모드·속도·조향·횡/yaw 오차·검증기 (Ctrl-C 종료)
 #   rover shell                      실행 중 컨테이너에 bash (setup.bash 소싱 완료 상태)
+#   rover doctor                     새 PC 셋업 점검 (읽기 전용, SETUP.md 절 순서)
 #   rover carla … | real … | dds …   자리만 (ST-2 / 실차 때 채움)
 # 환경변수: ROVER_IMAGE  ROVER_MAP(호스트 지도 폴더)  ROVER_HEADLESS=1(rviz 없이)  ROVER_VEHICLE  ROVER_SENSOR
 set -euo pipefail
@@ -115,6 +116,7 @@ case "${1:-}" in
   build) shift; cmd_build "$@";;
   psim)  shift; cmd_psim "$@";;
   shell) cmd_shell;;
+  doctor) exec bash "$ROOT/tools/doctor.sh";;
   carla|real|dds) die "rover $1: 아직 없음 ($1 = $( [ "$1" = carla ] && echo ST-2 || echo 실차 ) 때 채움)";;
-  *) sed -n '2,10p' "$0";;
+  *) sed -n '2,11p' "$0";;
 esac
