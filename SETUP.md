@@ -30,13 +30,17 @@ autoware.rtst_rover/                         ← 이 repo (fork of autowarefound
 
 ---
 
-## 시작: 점검부터
+## 시작: 점검 → 자동 설치
 repo 를 clone 한 직후(§3 의 `git clone` 한 줄만 먼저), repo 루트에서:
 ```bash
-./tools/rover doctor
+./tools/rover doctor      # 점검만 (읽기 전용). SETUP 절 순서대로 ✔ / ✘ / !, ✘ 마다 → SETUP §x
+./tools/rover setup       # 점검 + 고칠 수 있는 ✘ 를 차례로 묻고(Y/n) 고침. sudo 는 필요한 단계에서만 비밀번호
+./tools/rover setup -y    # 묻지 않고 전부
 ```
-SETUP 절 순서대로 ✔ / ✘ / ! 를 찍고, ✘ 마다 `→ SETUP §x` 로 갈 곳을 알려준다. 읽기 전용(설치·sudo·파일 변경 없음).
-**✘ 가 있는 절만** 아래에서 찾아 하고, 다시 `doctor`. 전부 ✔ 면 §9 로.
+- `setup` 이 하는 일 = 아래 §1~§8 의 명령 그대로(실행 전에 `$ 명령` 을 찍는다). 고친 뒤 다시 점검하고, 새로 풀린 단계를 이어서 한다.
+- **docker 그룹을 추가하면 거기서 멈춘다** — 재로그인 후 `./tools/rover setup` 을 다시 돌리면 이미지·vcs import·빌드로 이어진다.
+- 자동으로 안 하는 것(직접): NVIDIA 드라이버, GitHub SSH 키 등록, 중첩 fork 작업 브랜치 선택(§5), `rover` PATH 링크(§6), 기본이 아닌 지도(`ROVER_MAP`), pacman 이 없는 배포판의 패키지 설치.
+- 아래 절들은 `setup` 이 실제로 하는 일의 설명이자, 손으로 할 때의 절차다.
 
 최소 버전 (doctor 가 판정):
 | 항목 | 최소 | 이유 |
