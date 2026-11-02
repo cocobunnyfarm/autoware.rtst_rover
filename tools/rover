@@ -116,6 +116,15 @@ cmd_psim() {
 }
 cmd_shell() { running || die "psim 미실행 — rover psim up"; docker exec -it "$PSIM" bash -c "$SRC; exec bash"; }
 
+# 🔒 버전 잠금: 코드·pin·이미지가 어긋나면 실행 안 함 (tools/version_gate.sh, 해결은 rover doctor)
+gate() { bash "$ROOT/tools/version_gate.sh" || exit 1; }
+
+case "${1:-}" in
+  build) gate;;
+  psim) case "${2:-}" in up|restart|watch) gate;; esac;;
+  shell) gate;;
+esac
+
 case "${1:-}" in
   build) shift; cmd_build "$@";;
   psim)  shift; cmd_psim "$@";;

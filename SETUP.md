@@ -46,6 +46,10 @@ autoware.rtst_rover/                         ← 이 repo (fork of autowarefound
 
 doctor/setup 은 시작할 때 고정 버전(upstream 태그·core·universe·launcher 기준·이미지 digest)을 먼저 찍는다.
 
+**🔒 rover 잠금**: `rover build` · `rover psim up|restart|watch` · `rover shell` 은 실행 전에 `tools/version_gate.sh` 로 위 대조를 하고, 하나라도 어긋나면 이유와 선택지를 찍고 **실행하지 않는다**. 풀려면 어긋남을 해결하는 수밖에 없다(우회 옵션 없음). 대조는 로컬 git·docker 만 써서 빠르다.
+- 어긋났을 때 **어느 쪽에 맞출지는 사용자가 정한다** — (a) 코드를 따라 pin·이미지를 올리거나 (b) pin 을 따라 코드를 되돌리거나. 스크립트는 아무것도 바꾸지 않고, `rover doctor` 가 코드가 가리키는 릴리스의 이미지 digest 를 ghcr 에서 조회해 보여준다.
+- 예외: 코드 = pin 인데 이미지만 없거나 digest 가 다르면 `rover setup` 이 pin 이미지를 다시 받는다(선택이 필요 없는 경우).
+
 ⚠ `universe-cuda-jazzy` 같은 **플로팅 태그는 매일 upstream main 으로 다시 빌드**된다. 2026-11-02 실제로 플로팅을 받아 universe main(> 0.53.1)이 섞였고, `map_based_prediction` 이 `lane_change_path_suppression.*`(#13525) 파라미터 없음으로 abort → AUTO 버튼이 죽었다. 다른 버전이 필요하면 `ROVER_IMAGE=` 로 덮을 수 있지만 doctor 가 경고한다.
 
 **upstream 을 올릴 때** (새 릴리스 태그 X 로):

@@ -13,6 +13,8 @@ PIN_FILE="$ROOT/repositories/rtst_rover.pin"
 # shellcheck source=/dev/null
 . "$PIN_FILE"
 IMAGE="${ROVER_IMAGE:-$PIN_IMAGE}"
+# shellcheck source=/dev/null
+. "$ROOT/tools/version_gate.sh"
 MAP_DEFAULT="$HOME/autoware_data/maps/sample-map-planning"
 MAP_HOST="${ROVER_MAP:-$MAP_DEFAULT}"
 MAP_URL="https://autoware-files.s3.us-west-2.amazonaws.com/maps/demos/sample-map-planning.zip"
@@ -81,6 +83,7 @@ fixable() { [ -n "${SKIP[$1]:-}" ] || QUEUE+=("$1"); }
 check() {
   FAIL=0; WARN=0; FAILS=(); WAITS=(); QUEUE=(); DOCKER_OK=0
   banner
+  vg_run   # 버전 대조는 먼저 계산해 두고(§3 의 pull 허용 판단), 표시는 §V 에서
 
   sec "§0 시스템"
   [ $OS_OK = 1 ] && ok "$OS_NAME" || warn "$OS_NAME" "(지원: Omarchy·Ubuntu — 점검은 되지만 패키지 자동 설치는 안 함)"
@@ -101,16 +104,6 @@ check() {
   else bad "upstream 원격 없음 또는 미fetch" "→ SETUP §1"; fixable outer_upstream; fi
   [ "$(git -C "$ROOT" config branch.main.pushRemote)" = no_push ] && ok "main push 잠금" || { bad "main push 잠금 없음" "→ SETUP §1"; fixable outer_upstream; }
   [ -x "$ROOT/.git/hooks/pre-commit" ] && ok "pre-commit 훅" || { bad "pre-commit 훅 없음" "→ SETUP §1"; fixable outer_hook; }
-  # 버전 고정 ①: 우리 autoware.repos == upstream 릴리스 태그의 것 (launcher 줄 제외)
-  local tagc; tagc="$(git -C "$ROOT" rev-parse -q --verify "refs/tags/$UPSTREAM_TAG^{commit}" 2>/dev/null)"
-  if [ -z "$tagc" ]; then wait_on "upstream 태그 $UPSTREAM_TAG 대조" "upstream fetch 후"
-  elif [ "$tagc" != "$UPSTREAM_COMMIT" ]; then bad "upstream 태그 $UPSTREAM_TAG = ${tagc:0:7}" "(pin 은 ${UPSTREAM_COMMIT:0:7}) — 태그가 바뀜? pin 확인"
-  elif diff -q <(git -C "$ROOT" show "$UPSTREAM_TAG:repositories/autoware.repos" | repos_wo_launcher) <(repos_wo_launcher < "$ROOT/repositories/autoware.repos") >/dev/null; then
-    ok "autoware.repos = upstream $UPSTREAM_TAG" "(launcher 줄만 우리 fork)"
-  else
-    bad "autoware.repos 가 upstream $UPSTREAM_TAG 와 다름" "→ git diff $UPSTREAM_TAG -- repositories/autoware.repos 확인, pin 갱신 필요 (SETUP 버전 고정)"
-  fi
-  grep -q 'cocobunnyfarm/autoware_launch.rtst_rover' "$ROOT/repositories/autoware.repos" && ok "launcher → 우리 fork" || bad "autoware.repos 의 launcher 가 우리 fork 아님"
 
   sec "§2.1 Docker"
   if ! command -v docker >/dev/null; then
@@ -172,12 +165,11 @@ check() {
     if docker image inspect "$IMAGE" >/dev/null 2>&1; then
       local sz digs; sz="$(docker image inspect "$IMAGE" --format '{{.Size}}' | awk '{printf "%.1f GB", $1/1e9}')"
       digs="$(docker image inspect "$IMAGE" --format '{{range .RepoDigests}}{{.}} {{end}}')"
-      if [[ "$digs" == *"$PIN_IMAGE_DIGEST"* ]]; then ok "$IMAGE" "($sz, digest 일치 ${PIN_IMAGE_DIGEST:0:19}…)"
-      elif [ -n "${ROVER_IMAGE:-}" ]; then warn "$IMAGE" "(ROVER_IMAGE 덮어씀 — digest 대조 안 함)"
-      else bad "이미지 digest 불일치" "(로컬 ${digs:-없음} ≠ pin ${PIN_IMAGE_DIGEST:0:19}…) → 다시 pull"; fixable image_pull; fi
+      if [[ "$digs" == *"$PIN_IMAGE_DIGEST"* ]]; then ok "$IMAGE" "($sz, digest = pin ${PIN_IMAGE_DIGEST:0:19}…)"
+      else info "$IMAGE 있음, digest ≠ pin" "(→ §V 버전 대조)"; fi
     else
       local free_gb; free_gb="$(df -BG --output=avail "$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo /)" 2>/dev/null | tail -1 | tr -dc 0-9)"
-      if [ "${free_gb:-0}" -ge $MIN_DISK_GB ]; then bad "이미지 없음 $IMAGE" "(디스크 여유 ${free_gb} GB) → SETUP §3"; fixable image_pull
+      if [ "${free_gb:-0}" -ge $MIN_DISK_GB ]; then bad "이미지 없음 $IMAGE" "(디스크 여유 ${free_gb} GB) → SETUP §3"; CODE_EQ_PIN && fixable image_pull
       else bad "이미지 없음, 디스크 여유 ${free_gb} GB" "(≥ $MIN_DISK_GB 필요) — 공간 먼저"; fi
     fi
     local floating; floating="$(docker images ghcr.io/autowarefoundation/autoware --format '{{.Tag}}' | grep -xE 'universe(-cuda)?-(jazzy|humble)' | paste -sd' ')"
@@ -210,14 +202,6 @@ check() {
     [ "$(git -C "$NESTED" config branch.main.pushRemote)" = no_push ] && ok "main push 잠금" || { bad "main push 잠금 없음" "→ SETUP §5"; fixable nested_git; }
     [ -x "$(git -C "$NESTED" rev-parse --absolute-git-dir)/hooks/pre-commit" ] && ok "pre-commit 훅" || { bad "pre-commit 훅 없음" "→ SETUP §5"; fixable nested_git; }
     info "브랜치 $(git -C "$NESTED" symbolic-ref --short HEAD 2>/dev/null)" "$(git -C "$NESTED" log --oneline -1 | cut -c1-60)  (작업 브랜치 전환은 직접: SETUP §5)"
-    # 버전 고정 ②: 중첩 fork 가 upstream $LAUNCHER_BASE_TAG 위에 있고, 그보다 새 upstream 태그를 품지 않는지
-    local newest
-    if git -C "$NESTED" rev-parse -q --verify "refs/tags/$LAUNCHER_BASE_TAG" >/dev/null; then
-      newest="$(git -C "$NESTED" tag --merged HEAD | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)"
-      if ! git -C "$NESTED" merge-base --is-ancestor "$LAUNCHER_BASE_TAG" HEAD; then bad "중첩 fork 가 upstream $LAUNCHER_BASE_TAG 기반 아님" "→ pin 의 LAUNCHER_BASE_TAG 확인"
-      elif [ "$newest" != "$LAUNCHER_BASE_TAG" ]; then bad "중첩 fork 에 더 새 upstream 태그 $newest 가 섞임" "(pin $LAUNCHER_BASE_TAG) → 이미지·pin 같이 올려야 함"
-      else ok "중첩 fork 기준 = upstream $LAUNCHER_BASE_TAG" "(pin 일치)"; fi
-    else wait_on "중첩 fork 기준 태그 $LAUNCHER_BASE_TAG 대조" "upstream 태그 fetch 후"; fi
   else
     wait_on "중첩 fork 설정" "vcs import 로 받은 후"
   fi
@@ -240,6 +224,42 @@ check() {
     bad "지도 폴더 없음" "→ SETUP §7"; mapbad=1
   fi
   [ $mapbad = 1 ] && [ "$MAP_HOST" = "$MAP_DEFAULT" ] && fixable map_download
+
+  sec "§V 버전 대조 — 코드 · pin · 이미지 (어긋나면 rover 잠김)"
+  vg_run   # §3 에서 pull 했을 수 있으니 다시
+  local x
+  if [ -n "$VG_CODE_TAG" ] && [ "$VG_CODE_TAG" = "$UPSTREAM_TAG" ]; then ok "코드(autoware.repos) = upstream $VG_CODE_TAG = pin"; fi
+  [[ "$VG_IMG_DIGESTS" == *"$PIN_IMAGE_DIGEST"* ]] && ok "이미지 digest = pin" "(${PIN_IMAGE##*/})"
+  printf '%s\n' "${VG_ISSUES[@]}" "${VG_WAITS[@]}" | grep -q "중첩 fork\|launch 기준" || ok "중첩 fork 기준 = upstream $LAUNCHER_BASE_TAG = pin"
+  for x in "${VG_ISSUES[@]}"; do
+    case "$x" in "pin 이미지 없음|"*) wait_on "이미지 digest 대조" "pin 이미지 받은 후 (§3)";; *) bad "${x%%|*}" "— ${x#*|}";; esac
+  done
+  for x in "${VG_WAITS[@]}";  do wait_on "${x%%|*}" "${x#*|}"; done
+  # 이미지 digest 만 어긋나고 코드는 pin 과 같으면 → pin 이미지 다시 받기는 자동 가능
+  if CODE_EQ_PIN && printf '%s\n' "${VG_ISSUES[@]}" | grep -q "^이미지 digest ≠ pin"; then fixable image_pull; fi
+  # 코드가 pin 과 다르면: 그 릴리스의 이미지가 있는지 조회해서 보여주기만 (선택은 사용자)
+  if [ -n "$VG_CODE_TAG" ] && [ "$VG_CODE_TAG" != "$UPSTREAM_TAG" ]; then
+    local cand="${PIN_IMAGE%:*}:universe-cuda-jazzy-$VG_CODE_TAG" dg
+    dg="$(ghcr_digest "universe-cuda-jazzy-$VG_CODE_TAG")"
+    [ -n "$dg" ] && info "참고: 코드 릴리스의 이미지 ${cand##*/}" "digest $dg" || info "참고: ${cand##*/} 이미지 조회 안 됨" "(ghcr 에 없거나 네트워크)"
+  fi
+  if [ -n "$VG_NEWEST" ] && [ "$VG_NEWEST" != "$UPSTREAM_TAG" ] && [ "$(printf '%s\n%s\n' "$VG_NEWEST" "$UPSTREAM_TAG" | sort -V | tail -1)" = "$VG_NEWEST" ]; then
+    info "upstream 에 더 새 릴리스 $VG_NEWEST 있음" "(올릴지는 선택 — SETUP 버전 고정 절)"
+  fi
+  if [ ${#VG_ISSUES[@]} = 0 ] && [ ${#VG_WAITS[@]} = 0 ]; then ok "rover 잠금 풀림"
+  else
+    printf "  ${R}🔒 rover 잠김${N} ${D}(build·psim·shell 실행 안 됨)${N}\n"
+    printf '%s\n' "${VG_ISSUES[@]}" | grep -q "stale\|코드 ≠ pin\|중첩 fork ≠ pin\|launch 기준" && vg_options
+  fi
+}
+
+CODE_EQ_PIN() { [ -n "${VG_CODE_TAG:-}" ] && [ "$VG_CODE_TAG" = "$UPSTREAM_TAG" ]; }
+ghcr_digest() {  # ghcr 익명 토큰으로 태그의 인덱스 digest 조회 (doctor 만, 네트워크)
+  local tok; tok="$(curl -fsS --max-time 8 "https://ghcr.io/token?scope=repository:autowarefoundation/autoware:pull" 2>/dev/null | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
+  [ -n "$tok" ] || return 0
+  curl -fsSI --max-time 8 -H "Authorization: Bearer $tok" \
+    -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json" \
+    "https://ghcr.io/v2/autowarefoundation/autoware/manifests/$1" 2>/dev/null | tr -d '\r' | awk 'tolower($1)=="docker-content-digest:"{print $2}'
 }
 
 # ================================================================= 고치기 (함수 이름 = fix_<항목>)
