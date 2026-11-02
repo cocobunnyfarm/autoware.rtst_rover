@@ -18,7 +18,7 @@ SYSCTL_FILE=/etc/sysctl.d/60-autoware-dds.conf
 HOOK='#!/bin/sh
 [ "$(git symbolic-ref --short HEAD 2>/dev/null)" = main ] && { echo "main 은 upstream 거울 — 커밋 금지 (master 나 feat/* 에서)"; exit 1; }
 exit 0'
-MY_UID="$(id -u)"; MY_GID="$(id -g)"
+MY_UID="$(id -u)"; MY_GID="$(getent passwd "$(id -un)" | cut -d: -f4)"   # 기본 그룹 (newgrp 셸에서도 docker 가 아니라 원래 그룹)
 
 # 최소 버전과 근거
 MIN_DOCKER=20.10      # cgroup v2 지원 시작 (요즘 배포판은 cgroup v2)
@@ -268,7 +268,10 @@ desc_image_pull="이미지 받기 ~17 GB ($IMAGE)"
 fix_image_pull() { run docker pull "$IMAGE"; }
 desc_vcs_import="의존 repo 받기 — 컨테이너에서 vcs import src (내 uid 로)"
 fix_vcs_import() {
-  run docker run --rm -e HOST_UID="$MY_UID" -e HOST_GID="$MY_GID" -v "$ROOT":/ws -w /ws "$IMAGE" \
+  # detachedHead 안내문(태그 checkout 마다 20줄) 끄기
+  run docker run --rm -e HOST_UID="$MY_UID" -e HOST_GID="$MY_GID" \
+    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=advice.detachedHead -e GIT_CONFIG_VALUE_0=false \
+    -v "$ROOT":/ws -w /ws "$IMAGE" \
     bash -c 'vcs import src < repositories/autoware.repos' 2>&1 | grep -v '^\[entrypoint\]'
   return "${PIPESTATUS[0]}"
 }
