@@ -1,23 +1,28 @@
 #!/usr/bin/env bash
 # rover — autoware.rtst_rover 워크스페이스 실험용 CLI
-#   rover build [pkg ...]            우리 패키지 오버레이 빌드 (컨테이너, --packages-select)
+#   rover build [pkg ...]            우리 패키지 오버레이 빌드 (컨테이너, --packages-select). 인자 없으면 전부
 #   rover psim up [launch_arg ...]   planning_simulator 기동 (RViz 포함). 예: rover psim up vehicle_model:=rtst_rover
 #   rover psim down | restart        종료 / 재기동 (yaml·xacro 고친 뒤)
 #   rover psim logs [-f]             [ERROR]·죽은 프로세스·route 실패만 추림. -f 는 원본 follow
 #   rover psim check                 로드된 차량·센서킷 실측 (패키지 경로, TF, 시뮬 파라미터)
 #   rover psim watch                 주행 중 0.5 s 마다 한 줄: 시나리오·기어·모드·속도·조향·횡/yaw 오차·검증기 (Ctrl-C 종료)
 #   rover shell                      실행 중 컨테이너에 bash (setup.bash 소싱 완료 상태)
+#   rover doctor                     새 PC 셋업 점검 (읽기 전용, SETUP.md 절 순서)
+#   rover setup [-y]                 점검 + 빠진 것 설치 (단계마다 Y/n, sudo 는 필요한 단계만)
 #   rover carla … | real … | dds …   자리만 (ST-2 / 실차 때 채움)
 # 환경변수: ROVER_IMAGE  ROVER_MAP(호스트 지도 폴더)  ROVER_HEADLESS=1(rviz 없이)  ROVER_VEHICLE  ROVER_SENSOR
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"  # 심링크(~/.local/bin/rover)로 불러도 fork 루트
-IMAGE="${ROVER_IMAGE:-ghcr.io/autowarefoundation/autoware:universe-cuda-jazzy}"
+# 이미지 = repositories/rtst_rover.pin 의 고정 이미지 (코드 핀과 같은 upstream 릴리스). 플로팅 태그 금지.
+. "$ROOT/repositories/rtst_rover.pin"
+IMAGE="${ROVER_IMAGE:-$PIN_IMAGE}"
 MAP_HOST="${ROVER_MAP:-$HOME/autoware_data/maps/sample-map-planning}"
 VEHICLE="${ROVER_VEHICLE:-rtst_rover}"
 SENSOR="${ROVER_SENSOR:-rtst_rover_sensor_kit}"
 PSIM=planning_sim
-PKGS_DEFAULT="rtst_rover_description rtst_rover_launch rtst_rover_sensor_kit_description rtst_rover_sensor_kit_launch"
+# 기본 = 우리가 고치는 패키지 전부 (autoware_planning_config: 이미지에도 있지만 fork yaml 을 쓰려고 덮어씀)
+PKGS_DEFAULT="rtst_rover_description rtst_rover_launch rtst_rover_sensor_kit_description rtst_rover_sensor_kit_launch autoware_planning_config"
 
 B=$'\e[1m'; G=$'\e[32m'; R=$'\e[31m'; Y=$'\e[33m'; D=$'\e[2m'; N=$'\e[0m'
 ok()  { printf "  ${G}✔${N} %s ${D}%s${N}\n" "$1" "${2:-}"; }
@@ -111,10 +116,21 @@ cmd_psim() {
 }
 cmd_shell() { running || die "psim 미실행 — rover psim up"; docker exec -it "$PSIM" bash -c "$SRC; exec bash"; }
 
+# 🔒 버전 잠금: 코드·pin·이미지가 어긋나면 실행 안 함 (tools/version_gate.sh, 해결은 rover doctor)
+gate() { bash "$ROOT/tools/version_gate.sh" || exit 1; }
+
+case "${1:-}" in
+  build) gate;;
+  psim) case "${2:-}" in up|restart|watch) gate;; esac;;
+  shell) gate;;
+esac
+
 case "${1:-}" in
   build) shift; cmd_build "$@";;
   psim)  shift; cmd_psim "$@";;
   shell) cmd_shell;;
+  doctor) shift; exec bash "$ROOT/tools/doctor.sh" "$@";;
+  setup)  shift; exec bash "$ROOT/tools/doctor.sh" --fix "$@";;
   carla|real|dds) die "rover $1: 아직 없음 ($1 = $( [ "$1" = carla ] && echo ST-2 || echo 실차 ) 때 채움)";;
-  *) sed -n '2,10p' "$0";;
+  *) sed -n '2,12p' "$0";;
 esac
