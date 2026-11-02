@@ -38,10 +38,10 @@ cd autoware.rtst_rover
 ./tools/rover setup       # 점검 + 고칠 수 있는 ✘ 를 차례로 묻고(Y/n) 고침. sudo 는 필요한 단계에서만
 ./tools/rover setup -y    # 묻지 않고 전부
 ```
-- `setup` 이 하는 일 = 아래 §0~§8 그대로. 실행 전에 `$ 명령` 을 찍고, 고친 뒤 다시 점검해 새로 풀린 단계를 이어서 한다.
+- `setup` 이 하는 일 = 아래 §0~§7 그대로 (환경 준비까지). 실행 전에 `$ 명령` 을 찍고, 고친 뒤 다시 점검해 새로 풀린 단계를 이어서 한다.
 - **docker 그룹을 추가하면 거기서 멈춘다** — 그룹은 다시 로그인해야 적용된다. 재로그인 후 `./tools/rover setup` 을 한 번 더.
 - 자동으로 안 하는 것(직접): NVIDIA 드라이버, GitHub SSH 키 등록, 중첩 fork 작업 브랜치 선택(§5), `rover` PATH 링크(§6), 기본이 아닌 지도(`ROVER_MAP`).
-- 전부 ✔ 면 §9.
+- 전부 ✔ 면 §8 `rover build` → §9 `rover psim up`.
 
 최소 버전 (doctor 가 판정):
 | 항목 | 최소 | 이유 |
@@ -182,10 +182,10 @@ unzip -oq ~/autoware_data/maps/sample-map-planning.zip -d ~/autoware_data/maps &
 ## 8. 빌드 (우리 패키지만 오버레이)
 Autoware 전체는 이미지 안에 이미 빌드돼 있다(`/opt/autoware`, underlay). 우리가 고치는 패키지만 컨테이너에서 colcon 으로 빌드해 `install/` 에 올리면(overlay), 실행할 때 `/opt/autoware` 위에 `install/` 을 겹쳐 source 해서 **같은 이름의 패키지는 우리 것이 이긴다**.
 ```bash
-rover build rtst_rover_description rtst_rover_launch \
-            rtst_rover_sensor_kit_description rtst_rover_sensor_kit_launch \
-            autoware_planning_config
+rover build                                         # 인자 없으면 아래 5개 전부
+rover build <pkg> [...]                             # 일부만
 ```
+환경 준비(setup)와 달리 이건 작업의 일부라 직접 돌린다. `install/` 이 없으면 `rover psim up` 이 "먼저 rover build" 로 멈춘다.
 | 패키지 | 내용 |
 |---|---|
 | `rtst_rover_description` | 차량 치수(`vehicle_info`)·시뮬 모델·URDF·mesh |
@@ -201,7 +201,7 @@ rover build rtst_rover_description rtst_rover_launch \
 ---
 
 ## 9. 기동 · 확인
-`rover doctor` 가 전부 ✔ 인 상태에서:
+`rover doctor` 전부 ✔ + `rover build` 한 상태에서:
 ```bash
 rover psim up                                       # 중첩 fork 가 master 일 때
 rover psim up planning_module_preset:=rover         # 작업 브랜치에 config/preset/rover_preset.yaml 이 있을 때

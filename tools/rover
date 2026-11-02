@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # rover — autoware.rtst_rover 워크스페이스 실험용 CLI
-#   rover build [pkg ...]            우리 패키지 오버레이 빌드 (컨테이너, --packages-select)
+#   rover build [pkg ...]            우리 패키지 오버레이 빌드 (컨테이너, --packages-select). 인자 없으면 전부
 #   rover psim up [launch_arg ...]   planning_simulator 기동 (RViz 포함). 예: rover psim up vehicle_model:=rtst_rover
 #   rover psim down | restart        종료 / 재기동 (yaml·xacro 고친 뒤)
 #   rover psim logs [-f]             [ERROR]·죽은 프로세스·route 실패만 추림. -f 는 원본 follow
@@ -19,7 +19,8 @@ MAP_HOST="${ROVER_MAP:-$HOME/autoware_data/maps/sample-map-planning}"
 VEHICLE="${ROVER_VEHICLE:-rtst_rover}"
 SENSOR="${ROVER_SENSOR:-rtst_rover_sensor_kit}"
 PSIM=planning_sim
-PKGS_DEFAULT="rtst_rover_description rtst_rover_launch rtst_rover_sensor_kit_description rtst_rover_sensor_kit_launch"
+# 기본 = 우리가 고치는 패키지 전부 (autoware_planning_config: 이미지에도 있지만 fork yaml 을 쓰려고 덮어씀)
+PKGS_DEFAULT="rtst_rover_description rtst_rover_launch rtst_rover_sensor_kit_description rtst_rover_sensor_kit_launch autoware_planning_config"
 
 B=$'\e[1m'; G=$'\e[32m'; R=$'\e[31m'; Y=$'\e[33m'; D=$'\e[2m'; N=$'\e[0m'
 ok()  { printf "  ${G}✔${N} %s ${D}%s${N}\n" "$1" "${2:-}"; }

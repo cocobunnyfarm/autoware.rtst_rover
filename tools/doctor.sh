@@ -14,7 +14,6 @@ MAP_HOST="${ROVER_MAP:-$MAP_DEFAULT}"
 MAP_URL="https://autoware-files.s3.us-west-2.amazonaws.com/maps/demos/sample-map-planning.zip"
 NESTED="$ROOT/src/launcher/autoware_launch.rtst_rover"
 NESTED_PUSH="git@github.com:cocobunnyfarm/autoware_launch.rtst_rover.git"
-OVERLAY_PKGS="rtst_rover_description rtst_rover_launch rtst_rover_sensor_kit_description rtst_rover_sensor_kit_launch autoware_planning_config"
 SYSCTL_FILE=/etc/sysctl.d/60-autoware-dds.conf
 HOOK='#!/bin/sh
 [ "$(git symbolic-ref --short HEAD 2>/dev/null)" = main ] && { echo "main 은 upstream 거울 — 커밋 금지 (master 나 feat/* 에서)"; exit 1; }
@@ -204,15 +203,6 @@ check() {
     bad "지도 폴더 없음" "→ SETUP §7"; mapbad=1
   fi
   [ $mapbad = 1 ] && [ "$MAP_HOST" = "$MAP_DEFAULT" ] && fixable map_download
-
-  sec "§8 빌드 (install/)"
-  local pk buildbad=0
-  if [ -d "$ROOT/install" ]; then
-    for pk in $OVERLAY_PKGS; do [ -d "$ROOT/install/$pk" ] && ok "$pk" || { bad "$pk 없음" "→ SETUP §8"; buildbad=1; }; done
-  else
-    bad "install/ 없음" "→ SETUP §8"; buildbad=1
-  fi
-  [ $buildbad = 1 ] && [ $DOCKER_OK = 1 ] && [ -d "$NESTED/.git" ] && docker image inspect "$IMAGE" >/dev/null 2>&1 && fixable build
 }
 
 # ================================================================= 고치기 (함수 이름 = fix_<항목>)
@@ -296,8 +286,6 @@ fix_map_download() {
   mkdir -p "$d" && run curl -fL -o "$d/sample-map-planning.zip" "$MAP_URL" \
     && run unzip -oq "$d/sample-map-planning.zip" -d "$d" && rm -f "$d/sample-map-planning.zip"
 }
-desc_build="오버레이 빌드: $OVERLAY_PKGS"
-fix_build() { run "$ROOT/tools/rover" build $OVERLAY_PKGS; }
 
 # ================================================================= 실행
 NEED_RELOGIN=0
@@ -325,6 +313,6 @@ else
 fi
 
 echo
-if [ $FAIL = 0 ]; then printf "${G}${B}전부 통과${N}${D} (경고 %d)${N} — 다음: rover psim up (SETUP §9)\n" "$WARN"
+if [ $FAIL = 0 ]; then printf "${G}${B}전부 통과${N}${D} (경고 %d)${N} — 다음: rover build → rover psim up (SETUP §8·§9)\n" "$WARN"
 else printf "${R}${B}✘ %d 개${N}${D}, 경고 %d — %s${N}\n" "$FAIL" "$WARN" "$([ $FIX = 1 ] && echo '남은 것은 직접 (메시지의 SETUP 절)' || echo '고치려면: ./tools/rover setup')"; fi
 exit $FAIL
