@@ -51,7 +51,8 @@ pkg_install() {   # 패키지 이름은 두 OS 공통 이름을 받는다: docke
 
 B=$'\e[1m'; G=$'\e[32m'; R=$'\e[31m'; Y=$'\e[33m'; C=$'\e[36m'; D=$'\e[2m'; N=$'\e[0m'
 ok()   { printf "  ${G}✔${N} %s ${D}%s${N}\n" "$1" "${2:-}"; }
-bad()  { printf "  ${R}✘${N} %s ${D}%s${N}\n" "$1" "${2:-}"; FAIL=$((FAIL+1)); }
+bad()  { printf "  ${R}✘${N} %s ${D}%s${N}\n" "$1" "${2:-}"; FAIL=$((FAIL+1)); FAILS+=("$1  ${2:-}"); }
+wait_on() { printf "  ${Y}⏸${N} %s ${D}— %s${N}\n" "$1" "$2"; WAITS+=("$1 — $2"); }   # 앞 단계가 끝나야 점검·설치 가능
 warn() { printf "  ${Y}!${N} %s ${D}%s${N}\n" "$1" "${2:-}"; WARN=$((WARN+1)); }
 info() { printf "  ${D}·${N} %s ${D}%s${N}\n" "$1" "${2:-}"; }
 sec()  { printf "\n${B}%s${N}\n" "$1"; }
@@ -63,7 +64,7 @@ fixable() { [ -n "${SKIP[$1]:-}" ] || QUEUE+=("$1"); }
 
 # ================================================================= 점검
 check() {
-  FAIL=0; WARN=0; QUEUE=(); DOCKER_OK=0; img_ver=""
+  FAIL=0; WARN=0; FAILS=(); WAITS=(); QUEUE=(); DOCKER_OK=0; img_ver=""
 
   sec "§0 시스템"
   [ $OS_OK = 1 ] && ok "$OS_NAME" || warn "$OS_NAME" "(지원: Omarchy·Ubuntu — 점검은 되지만 패키지 자동 설치는 안 함)"
@@ -98,7 +99,7 @@ check() {
       bad "docker 그룹 아님" "→ SETUP §2.1"; fixable docker_group
     fi
     if docker info >/dev/null 2>&1; then ok "데몬 응답 (sudo 없이)"; DOCKER_OK=1
-    elif [ -S /var/run/docker.sock ]; then bad "데몬 접근 불가" "socket 은 있음 — 대개 그룹 문제(위 줄)"
+    elif [ -S /var/run/docker.sock ]; then wait_on "sudo 없이 docker 접근" "docker 그룹 적용 후 (위 줄)"
     else bad "데몬 꺼짐" "→ SETUP §2.1"; fixable docker_daemon; fi
   fi
 
@@ -120,7 +121,7 @@ check() {
     if docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q nvidia; then ok "docker 에 nvidia 런타임 등록됨"
     elif command -v nvidia-ctk >/dev/null; then bad "docker 에 nvidia 런타임 없음" "→ SETUP §2.2"; fixable nv_runtime
     else bad "docker 에 nvidia 런타임 없음" "(toolkit 설치 후)"; fi
-  else info "nvidia 런타임 등록" "(docker 접근 불가로 건너뜀)"; fi
+  else wait_on "nvidia 런타임 등록 점검" "docker 접근 후"; fi
 
   sec "§2.3 DDS 커널 버퍼"
   local v it sysbad=0
@@ -151,7 +152,7 @@ check() {
       if [ "${free_gb:-0}" -ge $MIN_DISK_GB ]; then bad "이미지 없음 $IMAGE" "(디스크 여유 ${free_gb} GB) → SETUP §3"; fixable image_pull
       else bad "이미지 없음, 디스크 여유 ${free_gb} GB" "(≥ $MIN_DISK_GB 필요) — 공간 먼저"; fi
     fi
-  else info "이미지 점검" "(docker 접근 불가로 건너뜀)"; fi
+  else wait_on "이미지 점검·pull" "docker 접근 후"; fi
 
   sec "§4 src/ (vcs import)"
   local repos=() miss=() r other
@@ -159,8 +160,10 @@ check() {
   for r in "${repos[@]}"; do [ -e "$ROOT/src/$r/.git" ] || miss+=("$r"); done
   if [ ${#miss[@]} = 0 ]; then ok "repo ${#repos[@]}/${#repos[@]}"
   else
-    bad "repo $(( ${#repos[@]} - ${#miss[@]} ))/${#repos[@]}" "없음: $(printf '%s ' "${miss[@]:0:3}")$([ ${#miss[@]} -gt 3 ] && echo …) → SETUP §4"
-    [ $DOCKER_OK = 1 ] && docker image inspect "$IMAGE" >/dev/null 2>&1 && fixable vcs_import
+    local have="repo $(( ${#repos[@]} - ${#miss[@]} ))/${#repos[@]}"
+    if [ $DOCKER_OK = 1 ] && docker image inspect "$IMAGE" >/dev/null 2>&1; then
+      bad "$have" "없음: $(printf '%s ' "${miss[@]:0:3}")$([ ${#miss[@]} -gt 3 ] && echo …) → SETUP §4"; fixable vcs_import
+    else wait_on "$have (vcs import)" "docker 접근 + 이미지 받은 후 (컨테이너 안에서 받음)"; fi
   fi
   if [ -d "$ROOT/src" ]; then
     other="$(find "$ROOT/src" -maxdepth 4 ! -uid "$MY_UID" -print -quit 2>/dev/null)"
@@ -182,7 +185,7 @@ check() {
       [ "${img_ver%.*}" = "${src_ver%.*}" ] && ok "세대 일치: fork $src_ver ↔ 이미지 $img_ver" || bad "세대 불일치: fork $src_ver ↔ 이미지 $img_ver" "→ 직접: 이미지 pull 또는 fork 갱신"
     fi
   else
-    bad "중첩 fork 없음" "→ SETUP §4 (vcs import)"
+    wait_on "중첩 fork 설정" "vcs import 로 받은 후"
   fi
 
   sec "§6 rover 명령"
@@ -288,11 +291,11 @@ fix_map_download() {
 }
 
 # ================================================================= 실행
-NEED_RELOGIN=0
+NEED_RELOGIN=0; DONE=()
 if [ $FIX = 0 ]; then
   check
 else
-  for round in 1 2 3 4 5; do
+  for round in 1 2 3 4 5 6; do
     check
     declare -A seen=(); todo=()
     for q in "${QUEUE[@]}"; do [ -n "${seen[$q]:-}" ] || { seen[$q]=1; todo+=("$q"); }; done; unset seen
@@ -301,18 +304,30 @@ else
     for q in "${todo[@]}"; do
       d="desc_$q"; printf "\n${C}▶ %s${N}\n" "${!d}"
       if [ $YES = 0 ]; then read -rp "    진행? [Y/n] " ans; case "${ans:-y}" in y|Y) ;; *) SKIP[$q]=1; echo "    건너뜀"; continue;; esac; fi
-      if "fix_$q"; then printf "    ${G}✔ 완료${N}\n"; else printf "    ${R}✘ 실패${N} — 위 출력 확인, 이번 실행에서는 다시 묻지 않음\n"; SKIP[$q]=1; fi
+      if "fix_$q"; then printf "    ${G}✔ 완료${N}\n"; DONE+=("${!d}"); else printf "    ${R}✘ 실패${N} — 위 출력 확인, 이번 실행에서는 다시 묻지 않음\n"; SKIP[$q]=1; fi
     done
-    if [ $NEED_RELOGIN = 1 ]; then   # docker 가 필요한 단계(이미지·vcs·빌드)는 그룹이 적용된 새 세션에서
-      printf "\n${Y}${B}docker 그룹 적용을 위해 재로그인(로그아웃 → 로그인) 후 다시: ./tools/rover setup${N}\n"
-      break
-    fi
-    printf "\n${B}── 다시 점검 ──${N}\n"
-    [ $round = 5 ] && check
+    printf "\n${B}── 다시 점검 (지금 상태) ──${N}\n"
   done
 fi
 
+# ---- 요약: 지금 상태 기준
+printf "\n${B}── 요약 (지금 상태) ──${N}\n"
+if [ ${#DONE[@]} -gt 0 ]; then printf "  ${G}이번에 고친 것 %d${N}\n" "${#DONE[@]}"; for x in "${DONE[@]}"; do printf "    ${D}· %s${N}\n" "$x"; done; fi
+if [ $FAIL -gt 0 ]; then
+  printf "  ${R}✘ 남은 문제 %d${N}\n" "$FAIL"; for x in "${FAILS[@]}"; do printf "    ${D}· %s${N}\n" "$x"; done
+fi
+if [ ${#WAITS[@]} -gt 0 ]; then
+  printf "  ${Y}⏸ 앞 단계 대기 %d${N} ${D}(앞 단계가 풀리면 setup 이 이어서 함)${N}\n" "${#WAITS[@]}"; for x in "${WAITS[@]}"; do printf "    ${D}· %s${N}\n" "$x"; done
+fi
+[ $WARN -gt 0 ] && printf "  ${Y}! 경고 %d${N} ${D}(선택 사항)${N}\n" "$WARN"
 echo
-if [ $FAIL = 0 ]; then printf "${G}${B}전부 통과${N}${D} (경고 %d)${N} — 다음: rover build → rover psim up (SETUP §8·§9)\n" "$WARN"
-else printf "${R}${B}✘ %d 개${N}${D}, 경고 %d — %s${N}\n" "$FAIL" "$WARN" "$([ $FIX = 1 ] && echo '남은 것은 직접 (메시지의 SETUP 절)' || echo '고치려면: ./tools/rover setup')"; fi
-exit $FAIL
+if [ $FAIL = 0 ] && [ ${#WAITS[@]} = 0 ]; then
+  printf "${G}${B}환경 준비 완료${N} — 다음: ./tools/rover build → ./tools/rover psim up (SETUP §8·§9)\n"
+elif [ $NEED_RELOGIN = 1 ]; then
+  printf "${Y}${B}다음: docker 그룹 적용 — 재로그인(또는 이 터미널만: newgrp docker) → ./tools/rover setup${N}\n"
+elif [ $FIX = 0 ]; then
+  printf "${B}다음: ./tools/rover setup${N} ${D}(고칠 수 있는 건 자동, 나머지는 위 → SETUP 절)${N}\n"
+else
+  printf "${B}다음: 위 ✘ 를 SETUP 해당 절대로 직접 처리 → ./tools/rover setup${N}\n"
+fi
+exit $(( FAIL + ${#WAITS[@]} ))
