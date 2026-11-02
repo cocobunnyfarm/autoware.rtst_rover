@@ -14,7 +14,9 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"  # 심링크(~/.local/bin/rover)로 불러도 fork 루트
-IMAGE="${ROVER_IMAGE:-ghcr.io/autowarefoundation/autoware:universe-cuda-jazzy}"
+# 이미지 = repositories/rtst_rover.pin 의 고정 이미지 (코드 핀과 같은 upstream 릴리스). 플로팅 태그 금지.
+. "$ROOT/repositories/rtst_rover.pin"
+IMAGE="${ROVER_IMAGE:-$PIN_IMAGE}"
 MAP_HOST="${ROVER_MAP:-$HOME/autoware_data/maps/sample-map-planning}"
 VEHICLE="${ROVER_VEHICLE:-rtst_rover}"
 SENSOR="${ROVER_SENSOR:-rtst_rover_sensor_kit}"

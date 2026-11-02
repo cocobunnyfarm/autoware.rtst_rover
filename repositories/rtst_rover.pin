@@ -1,0 +1,18 @@
+# rtst_rover 버전 고정 — 코드(autoware.repos)와 실행 이미지가 같은 upstream 릴리스에서 나와야 한다.
+# rover · rover doctor/setup 이 이 파일을 읽는다 (bash source). 바꾸는 법은 SETUP.md "버전 고정" 절.
+#
+# ⚠ 플로팅 태그(universe-cuda-jazzy) 금지 — 매일 upstream main 으로 다시 빌드된다.
+#    2026-11-02 실제 사고: 플로팅 = 20261101 nightly(universe main) 를 받아, 우리 핀(universe 0.53.1)과 어긋남
+#    → map_based_prediction 이 새 파라미터(lane_change_path_suppression.*, #13525) 없음으로 abort → AUTO 불가.
+
+# 기준 upstream 릴리스: autowarefoundation/autoware 태그.
+# 우리 repositories/autoware.repos 는 이 태그의 것과 launcher 줄(→ 우리 fork)만 다르다 — doctor 가 확인.
+UPSTREAM_TAG=2.0.0
+UPSTREAM_COMMIT=6f91fff359e8af37bd97dcb116f412c7e167ac05
+
+# 우리 launcher fork(autoware_launch.rtst_rover)의 upstream 기준 태그 = 위 태그의 autoware.repos 의 launcher 버전
+LAUNCHER_BASE_TAG=0.53.0
+
+# 위 릴리스로 빌드된 공식 이미지. 태그 + digest(멀티아키 인덱스) 둘 다 고정.
+PIN_IMAGE=ghcr.io/autowarefoundation/autoware:universe-cuda-jazzy-2.0.0
+PIN_IMAGE_DIGEST=sha256:20e5b7902012b4ff87a6a7c3a87f7c2f2f7a78492e83fb7adb2243aab0fb8052

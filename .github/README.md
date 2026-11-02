@@ -1,6 +1,8 @@
 # autoware.rtst_rover
 
-[Autoware](https://github.com/autowarefoundation/autoware) 를 RTST 로버(`rtst_rover`) 차량·센서킷으로 돌리는 워크스페이스 (ROS 2 Jazzy, Autoware 0.53.x).
+[Autoware](https://github.com/autowarefoundation/autoware) 를 RTST 로버(`rtst_rover`) 차량·센서킷으로 돌리는 워크스페이스 (ROS 2 Jazzy).
+
+**버전 고정**: upstream autoware 릴리스 `2.0.0` · 이미지 `universe-cuda-jazzy-2.0.0`(digest 고정) — [`repositories/rtst_rover.pin`](https://github.com/cocobunnyfarm/autoware.rtst_rover/blob/master/repositories/rtst_rover.pin). 플로팅 태그 금지.
 
 ## ▶ 새 PC 셋업: [SETUP.md](https://github.com/cocobunnyfarm/autoware.rtst_rover/blob/master/SETUP.md)
 

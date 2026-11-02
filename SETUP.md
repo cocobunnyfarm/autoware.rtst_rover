@@ -13,6 +13,7 @@ clone 하고 `./tools/rover setup` 을 돌리면 planning_simulator 를 띄울 �
 ```
 autoware.rtst_rover/                         ← 이 repo (fork of autowarefoundation/autoware)
 ├── repositories/autoware.repos              ← 의존 repo 30개 목록. launcher 줄만 우리 fork
+├── repositories/rtst_rover.pin              ← ⭐ 버전 고정: upstream 릴리스 태그 · 이미지 태그+digest
 ├── tools/rover                              ← CLI: doctor · setup · build · psim · shell
 ├── SETUP.md                                 ← 이 파일
 ├── src/                                     ← vcs import 로 채움 (git 추적 안 함, src/.gitignore)
@@ -25,8 +26,34 @@ autoware.rtst_rover/                         ← 이 repo (fork of autowarefound
 |---|---|---|
 | 이 repo | `cocobunnyfarm/autoware.rtst_rover`, 브랜치 `master` | `main` = upstream 거울(커밋·push 금지) |
 | 중첩 fork | `cocobunnyfarm/autoware_launch.rtst_rover`, `master` + `feat/*` | `vcs import` 가 `master` 로 받음 |
-| 실행 이미지 | `ghcr.io/autowarefoundation/autoware:universe-cuda-jazzy` | **0.53.x** 세대. 중첩 fork 와 같은 세대여야 함 |
+| 기준 upstream | `autowarefoundation/autoware` 릴리스 **`2.0.0`** | core 1.10.0 · universe 0.53.1 · launch 0.53.0 |
+| 실행 이미지 | `ghcr.io/autowarefoundation/autoware:universe-cuda-jazzy-2.0.0` + digest | **같은 릴리스로 빌드된 것만**. 플로팅 `universe-cuda-jazzy` 금지 |
 | 지도 | `~/autoware_data/maps/sample-map-planning` | §7 |
+
+---
+
+## 버전 고정 (가장 중요)
+코드(`src/` = `autoware.repos` 핀)와 실행 이미지(`/opt/autoware` = 프리빌트 Autoware)는 **같은 upstream 릴리스**에서 나와야 한다.
+어긋나면 이미지 바이너리가 우리 config 에 없는 파라미터를 찾다 죽는 식으로 깨진다.
+그래서 `repositories/rtst_rover.pin` 한 파일에 고정하고, `rover` 는 이 파일의 이미지만 쓰며, `rover doctor` 가 매번 대조한다:
+
+| doctor 점검 | 어긋나면 |
+|---|---|
+| upstream 태그 `UPSTREAM_TAG` 의 커밋 = `UPSTREAM_COMMIT` | 태그가 바뀜 — pin 확인 |
+| 우리 `autoware.repos` = 그 태그의 `autoware.repos` (launcher 줄만 우리 fork) | 핀이 릴리스에서 벗어남 |
+| 로컬 이미지 digest = `PIN_IMAGE_DIGEST` | 다시 pull (`rover setup`) |
+| 중첩 fork 가 upstream `LAUNCHER_BASE_TAG` 위에 있고 더 새 upstream 태그를 품지 않음 | launch 쪽만 앞서감 |
+
+doctor/setup 은 시작할 때 고정 버전(upstream 태그·core·universe·launcher 기준·이미지 digest)을 먼저 찍는다.
+
+⚠ `universe-cuda-jazzy` 같은 **플로팅 태그는 매일 upstream main 으로 다시 빌드**된다. 2026-11-02 실제로 플로팅을 받아 universe main(> 0.53.1)이 섞였고, `map_based_prediction` 이 `lane_change_path_suppression.*`(#13525) 파라미터 없음으로 abort → AUTO 버튼이 죽었다. 다른 버전이 필요하면 `ROVER_IMAGE=` 로 덮을 수 있지만 doctor 가 경고한다.
+
+**upstream 을 올릴 때** (새 릴리스 태그 X 로):
+1. 바깥 fork: `git fetch upstream --tags` → master 에 `git merge X`(또는 그 커밋) → `autoware.repos` 의 launcher 줄은 우리 fork 유지
+2. 중첩 fork: X 의 `autoware.repos` 가 가리키는 launch 태그로 master 를 올림(merge) → `LAUNCHER_BASE_TAG`
+3. 이미지 태그 `universe-cuda-jazzy-X` 의 digest 확인:
+   `docker pull ghcr.io/autowarefoundation/autoware:universe-cuda-jazzy-X && docker image inspect … --format '{{index .RepoDigests 0}}'`
+4. `rtst_rover.pin` 4개 값 갱신 → `rover doctor` 전부 ✔ → `vcs import src < repositories/autoware.repos`(새 핀) → `rover build`
 
 ---
 
@@ -114,12 +141,14 @@ RViz 는 컨테이너에서 X11(`/tmp/.X11-unix`, `DISPLAY`)로 뜬다. 보통 �
 
 ---
 
-## 3. 이미지 받기 (~17 GB)
+## 3. 이미지 받기 (~18 GB)
+`rtst_rover.pin` 의 이미지(태그)를 받고 digest 가 pin 과 같은지 확인한다 (위 "버전 고정").
 ```bash
-docker pull ghcr.io/autowarefoundation/autoware:universe-cuda-jazzy
-docker run --rm --gpus all ghcr.io/autowarefoundation/autoware:universe-cuda-jazzy nvidia-smi   # GPU 표가 나오면 OK
+. repositories/rtst_rover.pin
+docker pull "$PIN_IMAGE"
+docker image inspect "$PIN_IMAGE" --format '{{range .RepoDigests}}{{.}} {{end}}'   # PIN_IMAGE_DIGEST 가 보여야 함
+docker run --rm --gpus all "$PIN_IMAGE" nvidia-smi                               # GPU 표가 나오면 OK
 ```
-doctor 가 이미지 안 `autoware_launch` 버전을 읽어 §5 에서 중첩 fork 와 세대를 비교한다.
 
 ---
 
@@ -127,8 +156,8 @@ doctor 가 이미지 안 `autoware_launch` 버전을 읽어 §5 에서 중첩 fo
 `vcs` 는 호스트에 없으므로 이미지 컨테이너에서 돌린다:
 ```bash
 docker run --rm -it -e HOST_UID=$(id -u) -e HOST_GID=$(id -g) -v "$PWD":/ws -w /ws \
-  ghcr.io/autowarefoundation/autoware:universe-cuda-jazzy \
-  bash -c 'vcs import src < repositories/autoware.repos'
+  "$PIN_IMAGE" \
+  bash -c 'vcs import src < repositories/autoware.repos'      # PIN_IMAGE: §3 처럼 pin 파일을 source
 ```
 - 엔트리포인트(`/docker-entrypoint.sh`)를 **살려 둔다** — `HOST_UID/GID` 로 내 uid 로 바꿔 실행해 준다.
   `--entrypoint bash` 로 건너뛰면 root 로 돌아 `src/` 가 root 소유가 된다(→ git `dubious ownership`).
@@ -153,7 +182,7 @@ git -C $N branch -r
 git -C $N switch <작업 브랜치>                       # 예: feat/rover-planning-params
 ```
 ⚠ 차량·센서킷·config 변경은 **이 중첩 repo 에서 커밋**한다. 바깥 repo 는 `src/` 를 추적하지 않는다.
-doctor `세대 불일치` → 이미지와 중첩 fork 의 `autoware_launch` 버전(앞 두 자리)이 다르다. `docker pull` 또는 fork 갱신.
+doctor `중첩 fork 에 더 새 upstream 태그` → launch 쪽만 앞서감. pin 과 이미지를 같이 올려야 한다 (위 "버전 고정").
 
 ---
 
@@ -231,4 +260,5 @@ rover psim up planning_module_preset:=rover         # 작업 브랜치에 config
 | 노드 수십 개가 기동 직후 즉사 | `--cap-add=NET_ADMIN` 빠짐(엔트리포인트가 lo multicast 를 켬). `rover` 를 쓰면 들어가 있음 |
 | `could not connect to display` | §2.4 |
 | `Goal's footprint exceeds lane!` | goal 이 차선 밖 — 차선 중앙 근처에 진행 방향으로 |
-| upstream 을 당긴 뒤 이상함 | 중첩 fork 와 이미지 세대 불일치 → `docker pull` 같이 (doctor §5) |
+| 노드가 `ParameterTypeException … expected [bool] got [not set]` 으로 abort | 이미지와 코드 버전 어긋남 → `rover doctor` §3 digest·§5 기준 태그 (위 "버전 고정") |
+| upstream 을 당긴 뒤 이상함 | pin·이미지를 같이 안 올림 → 위 "upstream 을 올릴 때" |
