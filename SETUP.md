@@ -71,7 +71,8 @@ cd autoware.rtst_rover
 ```
 - `setup` 이 하는 일 = 아래 §0~§7 그대로 (환경 준비까지). 실행 전에 `$ 명령` 을 찍고, 고친 뒤 다시 점검해 새로 풀린 단계를 이어서 한다.
 - **docker 그룹을 추가하면 거기서 멈춘다** — 그룹은 다시 로그인해야 적용된다. 재로그인 후 `./tools/rover setup` 을 한 번 더.
-- 자동으로 안 하는 것(직접): NVIDIA 드라이버, GitHub SSH 키 등록, 중첩 fork 작업 브랜치 선택(§5), `rover` PATH 링크(§6), 기본이 아닌 지도(`ROVER_MAP`).
+- 자동으로 안 하는 것(직접): NVIDIA 드라이버, GitHub SSH 키 등록, 중첩 fork 작업 브랜치 선택(§5), 기본이 아닌 지도(`ROVER_MAP`).
+- `rover` PATH 링크(§6)는 선택 — setup 이 "(선택)" 으로 묻는다. 경고(!)라 안 해도 통과.
 - 전부 ✔ 면 §8 `rover build` → §9 `rover psim up`.
 
 최소 버전 (doctor 가 판정):
@@ -191,6 +192,7 @@ doctor `중첩 fork 에 더 새 upstream 태그` → launch 쪽만 앞서감. pi
 ---
 
 ## 6. `rover` CLI 를 PATH 에 (선택)
+`rover setup` 이 "(선택)" 단계로 물어본다. 손으로 하려면:
 `tools/rover` 를 어디서든 `rover` 로 부르기 위한 링크 (스크립트가 링크를 따라가 repo 루트를 스스로 찾는다).
 ```bash
 mkdir -p ~/.local/bin && ln -sf "$PWD/tools/rover" ~/.local/bin/rover

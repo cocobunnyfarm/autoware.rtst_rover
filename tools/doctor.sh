@@ -209,9 +209,10 @@ check() {
   sec "§6 rover 명령"
   local p
   if p="$(command -v rover)"; then
-    [ "$(readlink -f "$p")" = "$ROOT/tools/rover" ] && ok "rover → 이 repo" "($p)" || warn "rover 가 다른 곳을 가리킴" "($p → $(readlink -f "$p")) → SETUP §6"
+    if [ "$(readlink -f "$p")" = "$ROOT/tools/rover" ]; then ok "rover → 이 repo" "($p)"
+    else warn "rover 가 다른 곳을 가리킴" "($p → $(readlink -f "$p")) — 선택: setup 이 이 repo 로 바꿀 수 있음"; fixable rover_link; fi
   else
-    warn "rover 가 PATH 에 없음" "지금은 ./tools/rover 로 호출 (선택: SETUP §6)"
+    warn "rover 가 PATH 에 없음" "지금은 ./tools/rover 로 호출 — 선택: setup 이 링크 가능 (SETUP §6)"; fixable rover_link
   fi
 
   sec "§7 지도 ($MAP_HOST)"
@@ -343,6 +344,11 @@ fix_nested_git() {
   run git -C "$NESTED" config branch.main.pushRemote no_push
   local h; h="$(git -C "$NESTED" rev-parse --absolute-git-dir)/hooks/pre-commit"
   printf '%s\n' "$HOOK" > "$h" && chmod +x "$h" && echo "    → $h"
+}
+desc_rover_link="(선택) rover 명령을 PATH 에: ~/.local/bin/rover → $ROOT/tools/rover"
+fix_rover_link() {
+  mkdir -p "$HOME/.local/bin" && run ln -sfn "$ROOT/tools/rover" "$HOME/.local/bin/rover" || return 1
+  case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) echo "    ⚠ ~/.local/bin 이 PATH 에 없음 — 셸 설정에 export PATH=\"\$HOME/.local/bin:\$PATH\" 추가 필요";; esac
 }
 desc_map_download="샘플 지도 받기 → $MAP_DEFAULT"
 fix_map_download() {
