@@ -238,8 +238,8 @@ rover build <pkg> [...]                             # 일부만
 ## 9. 기동 · 확인
 `rover doctor` 전부 ✔ + `rover build` 한 상태에서:
 ```bash
-rover psim up                                       # 중첩 fork 가 master 일 때
-rover psim up planning_module_preset:=rover         # 작업 브랜치에 config/preset/rover_preset.yaml 이 있을 때
+rover psim up                                       # 플래닝 preset = rover (config/preset/rover_preset.yaml, 기본)
+rover psim up planning_module_preset:=default       # upstream 원본 preset 으로 비교할 때
 ```
 - 마지막에 `✔ 노드 전부 생존 (N 노드)` + RViz 창.
 - RViz: **2D Pose Estimate**(차선 위) → **2D Goal Pose**(같은 차선·진행 방향) → **AUTO** → 주행·도착.
