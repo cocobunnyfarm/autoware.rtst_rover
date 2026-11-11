@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # rover — autoware.rtst_rover 워크스페이스 실험용 CLI
 #   rover build [pkg ...]            우리 패키지 오버레이 빌드 (컨테이너, --packages-select). 인자 없으면 전부
-#   rover psim up [launch_arg ...]   planning_simulator 기동 (RViz 포함). 예: rover psim up vehicle_model:=rtst_rover
+#   rover psim up [launch_arg ...]   planning_simulator 기동 (RViz 포함). preset 기본 rover — upstream 원본은 planning_module_preset:=default
 #   rover psim down | restart        종료 / 재기동 (yaml·xacro 고친 뒤)
 #   rover psim logs [-f]             [ERROR]·죽은 프로세스·route 실패만 추림. -f 는 원본 follow
 #   rover psim check                 로드된 차량·센서킷 실측 (패키지 경로, TF, 시뮬 파라미터)
@@ -52,7 +52,9 @@ psim_up() {
   [ -d "$ROOT/install" ] || die "install/ 없음 — 먼저 rover build"
   exists && docker rm -f "$PSIM" >/dev/null
   local rviz=true; [ "${ROVER_HEADLESS:-0}" = 1 ] && rviz=false
+  # 플래닝 preset 기본 = rover (config/preset/rover_preset.yaml). upstream 원본은 planning_module_preset:=default 로
   local extra="$*"
+  case " $extra " in *" planning_module_preset:="*) ;; *) extra="planning_module_preset:=rover${extra:+ $extra}";; esac
   # --cap-add=NET_ADMIN: 엔트리포인트가 호스트 lo 에 multicast 를 켠다(없으면 CycloneDDS 참여자 인덱스 고갈로 노드 25개 즉사)
   docker run -d --name "$PSIM" --network host --gpus all --cap-add=NET_ADMIN \
     "${COMMON[@]}" \
