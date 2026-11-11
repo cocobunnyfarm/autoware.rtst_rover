@@ -10,6 +10,7 @@
 #   rover doctor                     새 PC 셋업 점검 (읽기 전용, SETUP.md 절 순서)
 #   rover setup [-y]                 점검 + 빠진 것 설치 (단계마다 Y/n, sudo 는 필요한 단계만)
 #   rover carla … | real … | dds …   자리만 (ST-2 / 실차 때 채움)
+# 지도: ROVER_MAP > ~/autoware_data/maps/current(링크, 절대경로 OK) > sample-map-planning. 폴더 위치·깊이 제한 없음
 # 환경변수: ROVER_IMAGE  ROVER_MAP(호스트 지도 폴더)  ROVER_HEADLESS=1(rviz 없이)  ROVER_VEHICLE  ROVER_SENSOR
 set -euo pipefail
 
@@ -17,7 +18,11 @@ ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"  # 심�
 # 이미지 = repositories/rtst_rover.pin 의 고정 이미지 (코드 핀과 같은 upstream 릴리스). 플로팅 태그 금지.
 . "$ROOT/repositories/rtst_rover.pin"
 IMAGE="${ROVER_IMAGE:-$PIN_IMAGE}"
-MAP_HOST="${ROVER_MAP:-$HOME/autoware_data/maps/sample-map-planning}"
+# 지도: ROVER_MAP > ~/autoware_data/maps/current(공용 링크 — 어떤 지도든 여기 걸면 기본) > sample-map-planning
+MAP_CURRENT="$HOME/autoware_data/maps/current"
+if [ -n "${ROVER_MAP:-}" ]; then MAP_HOST="$ROVER_MAP"
+elif [ -e "$MAP_CURRENT" ]; then MAP_HOST="$MAP_CURRENT"
+else MAP_HOST="$HOME/autoware_data/maps/sample-map-planning"; fi
 VEHICLE="${ROVER_VEHICLE:-rtst_rover}"
 SENSOR="${ROVER_SENSOR:-rtst_rover_sensor_kit}"
 PSIM=planning_sim
@@ -53,18 +58,20 @@ psim_up() {
   exists && docker rm -f "$PSIM" >/dev/null
   local rviz=true; [ "${ROVER_HEADLESS:-0}" = 1 ] && rviz=false
   # 플래닝 preset 기본 = rover (config/preset/rover_preset.yaml). upstream 원본은 planning_module_preset:=default 로
+  # 지도 폴더를 실제 경로로 풀어 그 폴더만 마운트 → 링크(절대경로)·깊은 폴더 모두 됨. ⚠ 폴더 안 파일이 폴더 밖을 가리키는 링크면 컨테이너에서 깨짐
+  local map_real map_name; map_real="$(readlink -f "$MAP_HOST")"; map_name="$(basename "$map_real")"
   local extra="$*"
   case " $extra " in *" planning_module_preset:="*) ;; *) extra="planning_module_preset:=rover${extra:+ $extra}";; esac
   # --cap-add=NET_ADMIN: 엔트리포인트가 호스트 lo 에 multicast 를 켠다(없으면 CycloneDDS 참여자 인덱스 고갈로 노드 25개 즉사)
   docker run -d --name "$PSIM" --network host --gpus all --cap-add=NET_ADMIN \
     "${COMMON[@]}" \
     -e DISPLAY="${DISPLAY:-:0}" -e QT_X11_NO_MITSHM=1 -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
-    -v "$(dirname "$(dirname "$MAP_HOST")")":/autoware_data:ro \
+    -v "$map_real":/autoware_data/maps/$map_name:ro \
     "$IMAGE" bash -c "$SRC
       ros2 launch autoware_launch planning_simulator.launch.xml \
-        map_path:=/autoware_data/maps/$(basename "$MAP_HOST") \
+        map_path:=/autoware_data/maps/$map_name \
         vehicle_model:=$VEHICLE sensor_model:=$SENSOR vehicle_id:=$VEHICLE rviz:=$rviz $extra" >/dev/null
-  printf "${B}psim up${N} vehicle_model=%s sensor_model=%s map=%s rviz=%s %s\n" "$VEHICLE" "$SENSOR" "$(basename "$MAP_HOST")" "$rviz" "$extra"
+  printf "${B}psim up${N} vehicle_model=%s sensor_model=%s map=%s rviz=%s %s\n" "$VEHICLE" "$SENSOR" "$map_name ($map_real)" "$rviz" "$extra"
   local i=0
   while [ $i -lt 40 ]; do
     sleep 2; i=$((i+1))

@@ -210,7 +210,7 @@ curl -fL -o ~/autoware_data/maps/sample-map-planning.zip \
 unzip -oq ~/autoware_data/maps/sample-map-planning.zip -d ~/autoware_data/maps && rm ~/autoware_data/maps/sample-map-planning.zip
 ```
 폴더 = `lanelet2_map.osm` + `pointcloud_map.pcd` + `map_projector_info.yaml`.
-다른 지도는 같은 구성의 폴더를 `~/autoware_data/maps/<이름>/` 에 두고 `ROVER_MAP=~/autoware_data/maps/<이름>` 로 지정 (doctor 도 이 변수를 본다).
+다른 지도는 같은 구성(`lanelet2_map.osm`·`pointcloud_map.pcd`·`map_projector_info.yaml`)의 폴더를 어디든 두고, 기본으로 쓸 것을 공용 링크 `~/autoware_data/maps/current` 에 건다(`ln -sfn <지도 폴더 절대경로> ~/autoware_data/maps/current`). 한 번만 다른 지도는 `ROVER_MAP=<폴더>`. 우선순위: `ROVER_MAP` > `current` > `sample-map-planning` (doctor 도 같음). 폴더 안 파일은 실제 파일이어야 함(폴더 밖을 가리키는 링크는 컨테이너에서 깨짐).
 
 ---
 
