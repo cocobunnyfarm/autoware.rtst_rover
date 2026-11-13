@@ -16,7 +16,7 @@ IMAGE="${ROVER_IMAGE:-$PIN_IMAGE}"
 # shellcheck source=/dev/null
 . "$ROOT/tools/version_gate.sh"
 MAP_DEFAULT="$HOME/autoware_data/maps/sample-map-planning"
-MAP_HOST="${ROVER_MAP:-$MAP_DEFAULT}"
+MAP_HOST="${ROVER_MAP:-$( [ -e "$HOME/autoware_data/maps/current" ] && echo "$HOME/autoware_data/maps/current" || echo "$MAP_DEFAULT")}"  # rover 와 같은 우선순위
 MAP_URL="https://autoware-files.s3.us-west-2.amazonaws.com/maps/demos/sample-map-planning.zip"
 NESTED="$ROOT/src/launcher/autoware_launch.rtst_rover"
 NESTED_PUSH="git@github.com:cocobunnyfarm/autoware_launch.rtst_rover.git"
