@@ -221,6 +221,8 @@ rover build                                         # 인자 없으면 아래 5�
 rover build <pkg> [...]                             # 일부만
 ```
 환경 준비(setup)와 달리 이건 작업의 일부라 직접 돌린다. `install/` 이 없으면 `rover psim up` 이 "먼저 rover build" 로 멈춘다.
+
+**PC 와 로버 드라이버 repo**: PC 에는 로버 드라이버 repo(`src/vehicle/external/rtst_rover_vehicle_interface`, `src/sensor_component/external/rtst_rover_sensor_drivers`)가 필요 없다 — 받지 않는다. 받아 두더라도 PC 의 `rover build` 는 그 패키지들을 `--packages-ignore` 로 건너뛴다(없으면 `rtst_rover_launch` 빌드가 실패한다). 로버(arm64)에서는 `rover build` 가 개발 컨테이너 안에서 드라이버까지 빌드한다.
 | 패키지 | 내용 |
 |---|---|
 | `rtst_rover_description` | 차량 치수(`vehicle_info`)·시뮬 모델·URDF·mesh |

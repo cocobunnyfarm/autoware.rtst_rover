@@ -53,10 +53,12 @@ cmd_build() {
   if is_rover; then real_build "$@"; return; fi   # 로버에서는 개발 컨테이너 안에서 빌드 (경로가 다르다)
   local pkgs="${*:-$PKGS_DEFAULT}"
   printf "${B}build${N} %s\n" "$pkgs"
+  # --packages-ignore: PC 는 로버 드라이버 패키지를 빌드하지 않는다. 그 소스가 src/ 에 있으면(rover.repos 를 import 한 경우)
+  # rtst_rover_launch 의 exec_depend 를 따라 colcon 이 빌드된 install 을 요구해 실패한다 [실측 PC 2026-11-19] → 없는 것으로 보게 한다
   docker run --rm "${COMMON[@]}" "$IMAGE" bash -c "
     source /opt/autoware/setup.bash
-    colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release --packages-select $pkgs 2>&1 \
-      | grep -v -e '^\[entrypoint\]' -e 'haven.t been built' -e '^- ' -e 'being used from' -e 'packages-ignore' -e 'suppress this warning'"
+    colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release --packages-select $pkgs --packages-ignore $PKGS_ROVER 2>&1 \
+      | grep -v -e '^\[entrypoint\]' -e 'haven.t been built' -e '^- ' -e 'being used from' -e 'packages-ignore' -e 'suppress this warning' -e 'ignoring unknown package'"
   printf "  install/ 오버레이 패키지: "; ls "$ROOT/install" | grep -v -e "^_" -e "^COLCON" -e "setup\." | paste -sd' '; echo
 }
 
