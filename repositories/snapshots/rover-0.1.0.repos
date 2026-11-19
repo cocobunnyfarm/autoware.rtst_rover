@@ -1,0 +1,18 @@
+# 저장 지점 rover-0.1.0 (2026-11-19) — Autoware 를 로버에 올려 AUTO 로 처음 움직인 상태.
+#   기준: upstream Autoware 2.0.0 (repositories/rtst_rover.pin), 로버 JetPack 6.2.3, 이미지 universe-devel-jazzy-2.0.0
+#   되돌아가기: 이 repo 를 태그 rover-0.1.0 으로 받고
+#     vcs import src < repositories/snapshots/rover-0.1.0.repos
+#   각 repo 에도 같은 이름의 태그 rover-0.1.0 이 있다. 아래 version 은 그 태그가 가리키는 커밋이다.
+repositories:
+  launcher/autoware_launch.rtst_rover:
+    type: git
+    url: https://github.com/cocobunnyfarm/autoware_launch.rtst_rover
+    version: b31ec1b732cc449658d3efc38d0c6a16442f85b5
+  vehicle/external/rtst_rover_vehicle_interface:
+    type: git
+    url: git@github.com:cocobunnyfarm/rtst_rover_vehicle_interface.git
+    version: b2601c6e4609159a2a2c645754e33d850a479d1b
+  sensor_component/external/rtst_rover_sensor_drivers:
+    type: git
+    url: git@github.com:cocobunnyfarm/rtst_rover_sensor_drivers.git
+    version: 495bd7f81a0314074ccc7ff68660ebb6c1fab26a

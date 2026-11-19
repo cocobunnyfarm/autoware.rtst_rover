@@ -1,0 +1,13 @@
+# 로버(Jetson)에서만 받는 repo — 로버 하드웨어 드라이버.
+#   vcs import src < repositories/rover.repos
+# PC 에는 필요 없다(받으면 rover build 가 이 패키지들을 건너뛴다 — SETUP.md §8).
+# 둘 다 private repo 라 SSH 주소를 쓴다.
+repositories:
+  vehicle/external/rtst_rover_vehicle_interface:
+    type: git
+    url: git@github.com:cocobunnyfarm/rtst_rover_vehicle_interface.git
+    version: master
+  sensor_component/external/rtst_rover_sensor_drivers:
+    type: git
+    url: git@github.com:cocobunnyfarm/rtst_rover_sensor_drivers.git
+    version: master

@@ -169,6 +169,33 @@ docker run --rm -it -e HOST_UID=$(id -u) -e HOST_GID=$(id -g) -v "$PWD":/ws -w /
   doctor 는 `src/` 에 내 uid 가 아닌 파일이 있는지 본다. 복구: `sudo chown -R $(id -u):$(id -g) src` (safe.directory 로 덮지 말 것).
 - 일부만 받아졌으면 같은 명령을 다시 (이미 있는 repo 는 건너뜀).
 
+### 로버(Jetson)에서만: 드라이버 repo 둘
+로버 하드웨어 드라이버는 별도 repo 둘이고 `repositories/rover.repos` 에 적혀 있다(private → SSH 주소).
+```bash
+vcs import src < repositories/rover.repos     # 같은 컨테이너 방식으로. SSH 키가 컨테이너에 없으면 호스트에서 git clone
+```
+| repo | 받는 곳 |
+|---|---|
+| `rtst_rover_vehicle_interface` | `src/vehicle/external/` |
+| `rtst_rover_sensor_drivers` | `src/sensor_component/external/` |
+
+### 저장 지점 (태그 + 커밋 번호 파일)
+우리 repo 는 넷이다: 이 repo, 중첩 fork(`autoware_launch.rtst_rover`), 드라이버 repo 둘. 평소 repos 파일은 `version: master` 를 가리키므로 "어느 커밋끼리 짝이었나"는 남지 않는다. 남기고 싶은 지점에서 다음을 한다.
+1. 네 repo 를 모두 master 에 `--no-ff` 로 머지하고 push 한다.
+2. 이 repo 에 `repositories/snapshots/<이름>.repos` 를 커밋한다 — 나머지 세 repo 의 전체 커밋 번호.
+3. 네 repo 에 같은 이름의 주석 달린 태그(`git tag -a <이름>`)를 붙여 push 한다. 순서: 드라이버 둘 → 중첩 fork → 이 repo.
+
+규칙: 태그는 master 위에만 · push 한 태그는 옮기지 않는다(고치면 새 번호) · 안 바뀐 repo 에도 같은 이름으로 붙인다 · 이름은 `rover-<번호>`(숫자만 쓰면 upstream 릴리스 태그와 섞여 버전 검사가 헷갈린다).
+
+되돌아가기:
+```bash
+git clone -b rover-0.1.0 git@github.com:cocobunnyfarm/autoware.rtst_rover.git
+cd autoware.rtst_rover && vcs import src < repositories/snapshots/rover-0.1.0.repos
+```
+| 저장 지점 | 내용 |
+|---|---|
+| `rover-0.1.0` | Autoware(upstream 2.0.0)를 로버에 올려 AUTO 로 처음 움직임. 측위 = 바퀴 오도메트리, GPU 없음 |
+
 ---
 
 ## 5. 중첩 fork 설정 (`src/launcher/autoware_launch.rtst_rover`)
@@ -221,6 +248,8 @@ rover build                                         # 인자 없으면 아래 5�
 rover build <pkg> [...]                             # 일부만
 ```
 환경 준비(setup)와 달리 이건 작업의 일부라 직접 돌린다. `install/` 이 없으면 `rover psim up` 이 "먼저 rover build" 로 멈춘다.
+
+**PC 와 로버 드라이버 repo**: PC 에는 로버 드라이버 repo(`src/vehicle/external/rtst_rover_vehicle_interface`, `src/sensor_component/external/rtst_rover_sensor_drivers`)가 필요 없다 — 받지 않는다. 받아 두더라도 PC 의 `rover build` 는 그 패키지들을 `--packages-ignore` 로 건너뛴다(없으면 `rtst_rover_launch` 빌드가 실패한다). 로버(arm64)에서는 `rover build` 가 개발 컨테이너 안에서 드라이버까지 빌드한다.
 | 패키지 | 내용 |
 |---|---|
 | `rtst_rover_description` | 차량 치수(`vehicle_info`)·시뮬 모델·URDF·mesh |
