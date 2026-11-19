@@ -9,7 +9,12 @@
 #   rover shell                      실행 중 컨테이너에 bash (setup.bash 소싱 완료 상태)
 #   rover doctor                     새 PC 셋업 점검 (읽기 전용, SETUP.md 절 순서)
 #   rover setup [-y]                 점검 + 빠진 것 설치 (단계마다 Y/n, sudo 는 필요한 단계만)
-#   rover carla … | real … | dds …   자리만 (ST-2 / 실차 때 채움)
+#   rover real up [net=wifi|eth|lo|<인터페이스>] [map=<지도 폴더>] [loc=odom|none] [launch_arg ...]
+#                                    [로버] 실차 Autoware 기동 (RViz 없음): Autoware + 오도메트리 측위 + IMU. MANUAL 로 시작 — 바퀴 안 돎
+#   rover real down | check | logs [-f]   [로버] 종료 / 상태 실측 / 오류만 추림
+#   rover real stop                  [로버] 정지: Autoware 를 STOP 모드로 + 차량 인터페이스를 MANUAL 로
+#   rover real rviz net=<인터페이스>  [PC] RViz 만 띄워 로버의 Autoware 에 붙는다 (같은 네트워크)
+#   rover carla … | dds …            자리만 (ST-2 때 채움)
 # 지도: ROVER_MAP > ~/autoware_data/maps/current(링크, 절대경로 OK) > sample-map-planning. 폴더 위치·깊이 제한 없음
 # 환경변수: ROVER_IMAGE  ROVER_MAP(호스트 지도 폴더)  ROVER_HEADLESS=1(rviz 없이)  ROVER_VEHICLE  ROVER_SENSOR
 set -euo pipefail
@@ -17,6 +22,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"  # 심링크(~/.local/bin/rover)로 불러도 fork 루트
 # 이미지 = repositories/rtst_rover.pin 의 고정 이미지 (코드 핀과 같은 upstream 릴리스). 플로팅 태그 금지.
 . "$ROOT/repositories/rtst_rover.pin"
+is_rover() { [ "$(uname -m)" = aarch64 ]; }
+if is_rover && [ -n "${PIN_IMAGE_ROVER:-}" ]; then PIN_IMAGE="$PIN_IMAGE_ROVER"; fi   # 로버(arm64)는 같은 릴리스의 로버용 이미지
 IMAGE="${ROVER_IMAGE:-$PIN_IMAGE}"
 # 지도: ROVER_MAP > ~/autoware_data/maps/current(공용 링크 — 어떤 지도든 여기 걸면 기본) > sample-map-planning
 MAP_CURRENT="$HOME/autoware_data/maps/current"
@@ -43,6 +50,7 @@ running() { docker ps --format '{{.Names}}' | grep -qx "$PSIM"; }
 exists()  { docker ps -a --format '{{.Names}}' | grep -qx "$PSIM"; }
 
 cmd_build() {
+  if is_rover; then real_build "$@"; return; fi   # 로버에서는 개발 컨테이너 안에서 빌드 (경로가 다르다)
   local pkgs="${*:-$PKGS_DEFAULT}"
   printf "${B}build${N} %s\n" "$pkgs"
   docker run --rm "${COMMON[@]}" "$IMAGE" bash -c "
@@ -125,6 +133,162 @@ cmd_psim() {
 }
 cmd_shell() { running || die "psim 미실행 — rover psim up"; docker exec -it "$PSIM" bash -c "$SRC; exec bash"; }
 
+# ── 실차 ────────────────────────────────────────────────────────────────────────────────────
+# 로버에서는 개발 컨테이너 하나를 계속 쓴다: 드라이버가 쓰는 apt 패키지(robot_localization, imu_filter_madgwick,
+# laser_filters — rosdep install 로 설치)가 이미지에는 없고 그 컨테이너에만 있다. 우리 이미지를 만들면 psim 처럼 docker run 으로 바꾼다.
+DEV=rtst_rover_dev
+DEV_WS=/home/aw/autoware                 # 컨테이너 안 워크스페이스 경로. 빌드 산출물의 절대 경로가 이 기준이라 /ws 로 못 바꾼다
+DEV_MAPS=/home/aw/autoware_data/maps     # 지도는 마운트가 아니라 복사해 넣는다 (컨테이너가 지도 마운트 없이 만들어짐)
+DEV_DDS=/tmp/rover_cyclonedds.xml        # real up 이 만드는 DDS 설정. real 의 다른 명령도 전부 이 설정으로 실행
+DEV_SRC="cd $DEV_WS && source /opt/autoware/setup.bash && source install/setup.bash"
+PKGS_ROVER="ros_robot_controller_msgs ros_robot_controller controller rtst_rover_base_bringup rtst_rover_vehicle_interface rtst_rover_odometry_localizer sclidar_ros2 imu_calib deptrum-ros-driver-aurora930 rtst_rover_sensor_bringup"
+RVIZ=rover_rviz
+
+dev_ready() {
+  is_rover || die "이 명령은 로버(arm64)에서만: rover real $1"
+  docker ps -a --format '{{.Names}}' | grep -qx "$DEV" || die "개발 컨테이너 $DEV 없음"
+  docker ps --format '{{.Names}}' | grep -qx "$DEV" || { docker start "$DEV" >/dev/null; sleep 2; ok "컨테이너 $DEV 시작"; }
+}
+# 컨테이너 안에서 실행 (real up 이 정한 DDS 설정으로). dev_bg 는 백그라운드
+dev_exec() { docker exec -e CYCLONEDDS_URI="file://$DEV_DDS" "$DEV" /docker-entrypoint.sh bash -c "$DEV_SRC; $1" 2>&1 | grep -v '^\[entrypoint\]' || true; }
+dev_bg()   { docker exec -d -e CYCLONEDDS_URI="file://$DEV_DDS" "$DEV" /docker-entrypoint.sh bash -c "$DEV_SRC && $1"; }
+real_running() { docker exec "$DEV" pgrep -f "[r]os2 launch autoware_launch" >/dev/null 2>&1; }
+# net=wifi|eth 를 로버의 인터페이스 이름으로. 그 밖의 값은 인터페이스 이름 그대로
+net_if() { case "$1" in wifi) echo wlP1p1s0;; eth) echo enP8p1s0;; *) echo "$1";; esac; }
+# 인터페이스 하나에 묶은 cyclonedds 설정 파일을 만든다 (틀 = docker/files/cyclonedds.xml, lo 자리만 바꿈)
+dds_file() {
+  local ifname="$1" out="$2"
+  # IP 가 없는 인터페이스(케이블 빠짐 등)에 묶으면 DDS 가 노드를 못 만든다
+  [ "$ifname" = lo ] || ip -4 -o addr show dev "$ifname" 2>/dev/null | grep -q inet || die "인터페이스 $ifname 없음 또는 IP 없음 (ip -br addr 로 확인)"
+  sed "s|<NetworkInterface name=\"lo\"|<NetworkInterface name=\"$ifname\"|" "$ROOT/docker/files/cyclonedds.xml" > "$out"
+  grep -q "NetworkInterface name=\"$ifname\"" "$out" || die "DDS 설정 생성 실패: $out"
+}
+
+real_build() {
+  dev_ready build
+  local pkgs="${*:-$PKGS_DEFAULT $PKGS_ROVER}"
+  printf "${B}build${N} (컨테이너 %s) %s\n" "$DEV" "$pkgs"
+  docker exec "$DEV" /docker-entrypoint.sh bash -c "cd $DEV_WS && source /opt/autoware/setup.bash; [ -f install/setup.bash ] && source install/setup.bash
+    colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release --packages-select $pkgs 2>&1 \
+      | grep -v -e '^\[entrypoint\]' -e 'haven.t been built' -e '^- ' -e 'being used from' -e 'packages-ignore' -e 'suppress this warning'"
+}
+
+real_up() {
+  dev_ready up
+  local net=wifi map="$MAP_HOST" loc=odom extra="" a
+  for a in "$@"; do case "$a" in
+    net=*) net="${a#net=}";; map=*) map="${a#map=}";; loc=*) loc="${a#loc=}";;
+    *:=*) extra="$extra $a";; *) die "모르는 인자: $a  (net= map= loc= 또는 launch 인자 이름:=값)";; esac; done
+  case "$loc" in odom|none) ;; *) die "loc=odom|none";; esac
+  real_running && die "이미 떠 있음 — rover real down 먼저"
+  [ -d "$map" ] || die "지도 없음: $map (map=<폴더> 또는 ROVER_MAP)"
+  [ -e /dev/rrc ] || die "/dev/rrc 없음 — MCU 보드 USB 확인"
+  local ifname map_real map_name tmp
+  ifname="$(net_if "$net")"; map_real="$(readlink -f "$map")"; map_name="$(basename "$map_real")"
+  # DDS 설정을 컨테이너에 넣는다
+  tmp="$(mktemp)"; dds_file "$ifname" "$tmp"; docker cp -q "$tmp" "$DEV:$DEV_DDS"; rm -f "$tmp"
+  docker exec "$DEV" chmod 644 "$DEV_DDS"
+  # 지도는 매번 다시 복사 (호스트에서 고친 lanelet 이 반영되게)
+  docker exec "$DEV" bash -c "mkdir -p $DEV_MAPS && rm -rf $DEV_MAPS/$map_name"
+  docker cp -q "$map_real" "$DEV:$DEV_MAPS/$map_name"
+  docker exec "$DEV" pkill -f "ros2cli.daemon" 2>/dev/null || true   # 옛 DDS 설정을 쥔 ros2 데몬 제거
+  case " $extra " in *" planning_module_preset:="*) ;; *) extra="planning_module_preset:=rover$extra";; esac
+  # psim launch 에서 시뮬레이션 차만 뺀 구성:
+  #   vehicle_simulation:=false → 우리 vehicle_interface.launch.xml 이 불린다, launch_dummy_vehicle:=false → simple_planning_simulator 끔
+  dev_bg "ros2 launch autoware_launch planning_simulator.launch.xml map_path:=$DEV_MAPS/$map_name \
+      vehicle_model:=$VEHICLE sensor_model:=$SENSOR vehicle_id:=$VEHICLE rviz:=false \
+      vehicle_simulation:=false launch_dummy_vehicle:=false $extra > /tmp/real_autoware.log 2>&1"
+  # IMU 후처리(/imu): 로버 EKF 가 쓴다. 센서킷 런치로 옮기기 전까지 따로 띄운다
+  dev_bg "ros2 launch rtst_rover_sensor_bringup imu.launch.xml > /tmp/real_imu.log 2>&1"
+  # 임시 측위: 초기 위치 + 로버 odom → /localization/kinematic_state, TF map→base_link
+  [ "$loc" = odom ] && dev_bg "ros2 launch rtst_rover_odometry_localizer rtst_rover_odometry_localizer.launch.xml > /tmp/real_localizer.log 2>&1"
+  printf "${B}real up${N} net=%s(%s) map=%s loc=%s %s\n" "$net" "$ifname" "$map_name" "$loc" "$extra"
+  printf "  기동 대기 (Jetson 에서 약 2분) "
+  # 시작된 프로세스 수가 18초 동안 그대로면 다 뜬 것으로 본다
+  local i=0 n=0 last=-1 same=0
+  while [ $i -lt 90 ]; do
+    sleep 3; i=$((i+1)); printf "."
+    n="$(docker exec "$DEV" grep -c "process started" /tmp/real_autoware.log 2>/dev/null || true)"
+    if [ "${n:-0}" -ge 50 ] && [ "$n" = "$last" ]; then same=$((same+1)); else same=0; fi
+    last="$n"; [ $same -ge 6 ] && break
+    if [ $i -ge 4 ] && ! real_running; then break; fi   # launch 가 일찍 죽으면 기다리지 않는다
+  done; echo
+  local died; died="$(docker exec "$DEV" grep -c "process has died" /tmp/real_autoware.log 2>/dev/null || true)"
+  real_running || { bad "Autoware launch 가 종료됨" "rover real logs"; return 1; }
+  if [ "${died:-0}" = 0 ]; then ok "프로세스 ${n}개 시작, 죽은 것 없음"; else bad "죽은 프로세스 ${died}개" "rover real logs"; fi
+  echo "  제어 모드는 MANUAL 로 시작 — AUTO 를 걸기 전에는 바퀴로 아무것도 안 간다"
+  echo "  다음: rover real check  ·  PC 에서 rover real rviz net=<PC 인터페이스>  ·  멈출 때 rover real stop / down"
+}
+
+real_down() {
+  dev_ready down
+  docker exec "$DEV" bash -c '
+    for p in $(pgrep -f "[r]os2 launch"); do kill -INT $p; done
+    for i in $(seq 25); do pgrep -f "[r]os2 launch" >/dev/null || break; sleep 1; done
+    # SIGINT 로 안 죽고 남는 것까지 정리. 주의: 이 스크립트 본문에 아래 패턴과 맞는 글자를 쓰면 자기 자신이 죽는다 (그래서 첫 글자를 [] 로 감쌈)
+    pgrep -f "[r]os2 launch|[c]omponent_container|[o]dom_publisher|[r]os_robot_controller/lib|[e]kf_node|[i]mu_filter|[a]pply_calib|[o]dometry_localizer_node|[v]ehicle_interface_node" | xargs -r kill -9
+    sleep 1
+    echo "남은 ROS 프로세스: $(ps -eo cmd | grep -E "^/opt/(ros|autoware)/|/home/aw/autoware/[i]nstall/" | grep -vc "ros2cli.daemon")"' | sed 's/^/  /'
+  ok "real 종료"
+}
+
+real_check() {
+  dev_ready check; real_running || die "real 미실행 — rover real up"
+  dev_exec '
+    printf "  노드 수                               "; ros2 node list --no-daemon --spin-time 6 2>/dev/null | wc -l
+    printf "  죽은 프로세스                         "; grep -c "process has died" /tmp/real_autoware.log || true
+    printf "  DDS 인터페이스                        "; grep -o "NetworkInterface name=\"[^\"]*\"" '"$DEV_DDS"'
+    for t in /odom /vehicle/status/velocity_status /localization/kinematic_state /control/command/control_cmd; do
+      printf "  %-37s " $t; timeout 6 ros2 topic hz $t 2>&1 | grep "average rate" | tail -1 | grep . || echo "(안 나옴)"; done
+    printf "  제어 모드 (1 AUTONOMOUS, 4 MANUAL)    "; timeout 4 ros2 topic echo --once /vehicle/status/control_mode --field mode 2>/dev/null | head -1 | grep . || echo "?"
+    printf "  측위 초기화 (1 미완, 3 완료)          "; timeout 4 ros2 topic echo --once /api/localization/initialization_state --field state 2>/dev/null | head -1 | grep . || echo "?"
+    printf "  경로 (1 없음, 2 설정됨, 3 도착)       "; timeout 4 ros2 topic echo --once /api/routing/state --field state 2>/dev/null | head -1 | grep . || echo "?"
+    printf "  AUTO 가능                             "; timeout 4 ros2 topic echo --once /system/operation_mode/availability --field autonomous 2>/dev/null | head -1 | grep . || echo "?"
+    printf "  위치 xy                               "; timeout 4 ros2 topic echo --once /localization/kinematic_state --field pose.pose.position 2>/dev/null | head -2 | paste -sd" " | grep . || echo "(초기 위치 전)"
+  '
+}
+
+real_stop() {
+  dev_ready stop; real_running || die "real 미실행"
+  dev_exec '
+    timeout 10 ros2 service call /api/operation_mode/change_to_stop autoware_adapi_v1_msgs/srv/ChangeOperationMode "{}" 2>&1 | grep -o "success=[A-Za-z]*" | sed "s/^/  Autoware STOP 모드: /"
+    timeout 10 ros2 service call /control/control_mode_request autoware_vehicle_msgs/srv/ControlModeCommand "{mode: 4}" 2>&1 | grep -o "success=[A-Za-z]*" | sed "s/^/  차량 인터페이스 MANUAL: /"'
+}
+
+real_logs() {
+  dev_ready logs
+  if [ "${1:-}" = -f ]; then docker exec -it "$DEV" tail -f /tmp/real_autoware.log /tmp/real_localizer.log; return; fi
+  docker exec "$DEV" bash -c 'grep -n "\[ERROR\]\|process has died\|Traceback\|Failed to plan\|Failed to find a proper route" /tmp/real_autoware.log /tmp/real_localizer.log /tmp/real_imu.log 2>/dev/null \
+    | grep -v "Mode path not found\|has not received. Set ERROR\|VehicleCmdFilter" | cut -c1-220 | tail -40' || true
+}
+
+# PC: RViz 만. 로버와 같은 네트워크의 인터페이스에 DDS 를 묶는다
+real_rviz() {
+  is_rover && die "rover real rviz 는 PC 에서"
+  local net="" a
+  for a in "$@"; do case "$a" in net=*) net="${a#net=}";; *) die "rover real rviz net=<인터페이스>  (ip -br addr 로 확인)";; esac; done
+  [ -n "$net" ] || die "rover real rviz net=<인터페이스>  (로버와 같은 대역의 PC 인터페이스. ip -br addr 로 확인)"
+  [ -d "$ROOT/install" ] || die "install/ 없음 — 먼저 rover build (로버 모델 mesh 가 필요)"
+  local dds="/tmp/rover_cyclonedds_$net.xml"; dds_file "$net" "$dds"
+  docker ps -a --format '{{.Names}}' | grep -qx "$RVIZ" && docker rm -f "$RVIZ" >/dev/null
+  docker run -d --name "$RVIZ" --network host --gpus all --cap-add=NET_ADMIN \
+    "${COMMON[@]}" \
+    -e DISPLAY="${DISPLAY:-:0}" -e QT_X11_NO_MITSHM=1 -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
+    -v "$dds":/tmp/rover_cyclonedds.xml:ro -e CYCLONEDDS_URI=file:///tmp/rover_cyclonedds.xml \
+    "$IMAGE" bash -c "$SRC
+      rviz2 -d \$(ros2 pkg prefix autoware_launch)/share/autoware_launch/rviz/autoware.rviz" >/dev/null
+  printf "${B}real rviz${N} net=%s  (컨테이너 %s, 끄기: docker rm -f %s)\n" "$net" "$RVIZ" "$RVIZ"
+  echo "  로버에서 rover real up 이 떠 있어야 지도·로버가 보인다. 안 보이면: docker logs $RVIZ"
+}
+
+cmd_real() {
+  case "${1:-}" in
+    up) shift; real_up "$@";; down) real_down;; check) real_check;; stop) real_stop;;
+    logs) shift; real_logs "$@";; rviz) shift; real_rviz "$@";;
+    *) die "rover real up [net=wifi|eth|lo] [map=<폴더>] [loc=odom|none] | down | check | stop | logs [-f] | rviz net=<인터페이스>";;
+  esac
+}
+
 # 🔒 버전 잠금: 코드·pin·이미지가 어긋나면 실행 안 함 (tools/version_gate.sh, 해결은 rover doctor)
 gate() { bash "$ROOT/tools/version_gate.sh" || exit 1; }
 
@@ -132,6 +296,7 @@ case "${1:-}" in
   build) gate;;
   psim) case "${2:-}" in up|restart|watch) gate;; esac;;
   shell) gate;;
+  real) case "${2:-}" in up|rviz) gate;; esac;;
 esac
 
 case "${1:-}" in
@@ -140,6 +305,7 @@ case "${1:-}" in
   shell) cmd_shell;;
   doctor) shift; exec bash "$ROOT/tools/doctor.sh" "$@";;
   setup)  shift; exec bash "$ROOT/tools/doctor.sh" --fix "$@";;
-  carla|real|dds) die "rover $1: 아직 없음 ($1 = $( [ "$1" = carla ] && echo ST-2 || echo 실차 ) 때 채움)";;
-  *) sed -n '2,12p' "$0";;
+  real)  shift; cmd_real "$@";;
+  carla|dds) die "rover $1: 아직 없음 (ST-2 때 채움)";;
+  *) sed -n '2,17p' "$0";;
 esac

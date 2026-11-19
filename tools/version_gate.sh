@@ -24,6 +24,13 @@ vg_run() {
   if [ ! -f "$VG_PIN" ]; then VG_ISSUES+=("pin 파일 없음|$VG_PIN"); return; fi
   # shellcheck source=/dev/null
   . "$VG_PIN"
+  # 이미지 태그는 pin 의 릴리스 번호로 끝나야 한다 (PC·로버 이미지 중 한쪽만 올리는 것을 막는다)
+  local img
+  for img in "$PIN_IMAGE" "${PIN_IMAGE_ROVER:-}"; do
+    [ -z "$img" ] || [[ "$img" == *"-$UPSTREAM_TAG" ]] || VG_ISSUES+=("이미지 태그 ≠ pin 릴리스|${img##*/} 가 -$UPSTREAM_TAG 로 끝나지 않음")
+  done
+  # 로버(arm64)는 같은 릴리스의 로버용 이미지로 대조한다
+  if [ "$(uname -m)" = aarch64 ] && [ -n "${PIN_IMAGE_ROVER:-}" ]; then PIN_IMAGE="$PIN_IMAGE_ROVER"; PIN_IMAGE_DIGEST="$PIN_IMAGE_ROVER_DIGEST"; fi
 
   # ① 코드: 우리 autoware.repos 가 어느 upstream 릴리스와 같은가 (launcher 줄 제외)
   local tags t mine
