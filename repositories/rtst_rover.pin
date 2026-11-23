@@ -17,7 +17,9 @@ LAUNCHER_BASE_TAG=0.53.0
 PIN_IMAGE=ghcr.io/autowarefoundation/autoware:universe-cuda-jazzy-2.0.0
 PIN_IMAGE_DIGEST=sha256:20e5b7902012b4ff87a6a7c3a87f7c2f2f7a78492e83fb7adb2243aab0fb8052
 
-# 로버(arm64 Jetson)용 이미지 — 위와 같은 릴리스의 다른 종류(CUDA 없음, C++ 빌드 도구 포함).
+# 로버(arm64 Jetson)용 이미지 — 위와 같은 이미지의 arm64 판(CUDA 포함). 태그·digest 가 PC 와 같다(멀티아키 인덱스).
+#   우리 패키지는 이 이미지에서 빌드된다(컴파일러·nvcc 포함). Jetson 에서 GPU 를 쓰려면 platforms/ 의 조치가 더 필요하다.
+#   2026-11-22 이전에는 CUDA 없는 universe-devel-jazzy-2.0.0 (sha256:9fef856b…faf217) 을 썼다.
 # uname -m 이 aarch64 이면 rover · version_gate 가 PIN_IMAGE 대신 이 둘을 쓴다. 릴리스를 올릴 때 위 두 줄과 같이 올린다.
-PIN_IMAGE_ROVER=ghcr.io/autowarefoundation/autoware:universe-devel-jazzy-2.0.0
-PIN_IMAGE_ROVER_DIGEST=sha256:9fef856bcbb370114980a3b4f83152f9ebe7e2341516d5d3792138bd02faf217
+PIN_IMAGE_ROVER=ghcr.io/autowarefoundation/autoware:universe-cuda-jazzy-2.0.0
+PIN_IMAGE_ROVER_DIGEST=sha256:20e5b7902012b4ff87a6a7c3a87f7c2f2f7a78492e83fb7adb2243aab0fb8052
