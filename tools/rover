@@ -15,6 +15,9 @@
 #   rover real down | check | logs [-f]   [로버] 종료 / 상태 실측 / 오류만 추림
 #   rover real stop                  [로버] 정지: Autoware 를 STOP 모드로 + 차량 인터페이스를 MANUAL 로
 #   rover real rviz net=<인터페이스>  [PC] RViz 만 띄워 로버의 Autoware 에 붙는다 (같은 네트워크)
+#   rover models check               인지 모델이 릴리스가 고정한 판과 같은지 + [로버] 엔진을 이 구성으로 만들어 뒀는지 + GPU 인식
+#   rover models fetch <이름>...     모델(.onnx)을 고정된 판으로 받아 대조 (Hugging Face).  이름은 check 에 나온다
+#   rover models build <대상>...     [로버] 엔진(.engine)을 하나씩 미리 만든다 (Autoware 의 build_only). 대상은 check 에 나온다
 #   rover carla … | dds …            자리만 (ST-2 때 채움)
 # 지도: ROVER_MAP > ~/autoware_data/maps/current(링크, 절대경로 OK) > sample-map-planning. 폴더 위치·깊이 제한 없음
 # 환경변수: ROVER_IMAGE  ROVER_MAP(호스트 지도 폴더)  ROVER_HEADLESS=1(rviz 없이)  ROVER_VEHICLE  ROVER_SENSOR
@@ -320,13 +323,7 @@ real_check() {
     printf "  노드 수                               "; ros2 node list --no-daemon --spin-time 6 2>/dev/null | wc -l
     printf "  죽은 프로세스                         "; grep -c "process has died" /tmp/real_autoware.log || true
     printf "  DDS 인터페이스                        "; grep -o "NetworkInterface name=\"[^\"]*\"" '"$DEV_DDS"'
-    for t in /odom /vehicle/status/velocity_status /localization/kinematic_state /control/command/control_cmd; do
-      printf "  %-37s " $t; timeout 6 ros2 topic hz $t 2>&1 | grep "average rate" | tail -1 | grep . || echo "(안 나옴)"; done
-    printf "  제어 모드 (1 AUTONOMOUS, 4 MANUAL)    "; timeout 4 ros2 topic echo --once /vehicle/status/control_mode --field mode 2>/dev/null | head -1 | grep . || echo "?"
-    printf "  측위 초기화 (1 미완, 3 완료)          "; timeout 4 ros2 topic echo --once /api/localization/initialization_state --field state 2>/dev/null | head -1 | grep . || echo "?"
-    printf "  경로 (1 없음, 2 설정됨, 3 도착)       "; timeout 4 ros2 topic echo --once /api/routing/state --field state 2>/dev/null | head -1 | grep . || echo "?"
-    printf "  AUTO 가능                             "; timeout 4 ros2 topic echo --once /system/operation_mode/availability --field autonomous 2>/dev/null | head -1 | grep . || echo "?"
-    printf "  위치 xy                               "; timeout 4 ros2 topic echo --once /localization/kinematic_state --field pose.pose.position 2>/dev/null | head -2 | paste -sd" " | grep . || echo "(초기 위치 전)"
+    python3 '"$DEV_WS"'/tools/real_probe.py 8
   '
 }
 
@@ -363,6 +360,80 @@ real_rviz() {
   echo "  로버에서 rover real up 이 떠 있어야 지도·로버가 보인다. 안 보이면: docker logs $RVIZ"
 }
 
+# ── 인지 모델 · 엔진 ────────────────────────────────────────────────────────────────────────
+# .onnx(모델)는 받는 것, .engine 은 그 기계의 GPU·TensorRT 로 한 번 만들어야 하는 것 (다른 기계 것은 못 쓴다).
+# 안 만들어 두면 Autoware 첫 기동 때 모델마다 몇 분씩 걸리고, 여러 개가 동시에 빌드돼 메모리가 모자랄 수 있다 → 미리 하나씩.
+MODELS_HOST="$HOME/autoware_data/ml_models"
+MODEL_TARGETS="centerpoint/base centerpoint/short_range centerpoint/sigma centerpoint/tiny transfusion yolox tl_classifier tl_fine_detector"
+# 대상 → "모델 폴더|launch 패키지 launch 파일 [인자]".  전부 Autoware 의 build_only:=true (엔진만 만들고 종료) 를 쓴다
+model_target() {
+  case "$1" in
+    centerpoint/*)    echo "lidar_centerpoint|autoware_lidar_centerpoint lidar_centerpoint.launch.xml model_path:=$DEV_MODELS/lidar_centerpoint/${1#centerpoint/}";;
+    transfusion)      echo "lidar_transfusion|autoware_lidar_transfusion lidar_transfusion.launch.xml";;
+    yolox)            echo "tensorrt_yolox|autoware_tensorrt_yolox yolox_s_plus_opt.launch.xml";;
+    tl_classifier)    echo "traffic_light_classifier|autoware_traffic_light_classifier car_traffic_light_classifier.launch.xml";;
+    tl_fine_detector) echo "traffic_light_fine_detector|autoware_traffic_light_fine_detector traffic_light_fine_detector.launch.xml";;
+    *) return 1;;
+  esac
+}
+# 엔진을 만든 구성 = 플랫폼 + TensorRT 버전 + 이미지. 이 셋이 바뀌면 엔진을 다시 만들어야 한다
+models_sig()   { echo "$PLATFORM_NAME trt=$PLATFORM_TRT_VERSION image=$(docker image inspect -f '{{.Id}}' "$IMAGE" | cut -c8-19)"; }
+models_stamp() { echo "$MODELS_HOST/.rover_engines/${1//\//_}"; }
+
+models_check() {
+  python3 "$ROOT/tools/models.py" check || true
+  is_rover || return 0
+  dev_ready models
+  echo "엔진 (이 기계의 구성: $(models_sig))"
+  local t st
+  for t in $MODEL_TARGETS; do
+    st="$(models_stamp "$t")"
+    if [ ! -d "$MODELS_HOST/$(model_target "$t" | cut -d'|' -f1)" ]; then printf "  %-26s 모델 없음\n" "$t"
+    elif [ ! -f "$st" ]; then printf "  %-26s 안 만듦 → rover models build %s\n" "$t" "$t"
+    elif [ "$(head -1 "$st")" = "$(models_sig)" ]; then printf "  %-26s 만듦 (%s)\n" "$t" "$(sed -n 2p "$st")"
+    else printf "  %-26s 다른 구성으로 만든 것 (%s) → rover models build %s\n" "$t" "$(head -1 "$st")" "$t"; fi
+  done
+  printf "GPU  "
+  docker exec "$DEV" /docker-entrypoint.sh bash -c "$DEV_SRC; python3 -c \"
+import ctypes
+c=ctypes.CDLL('libcuda.so.1'); rc=c.cuInit(0); n=ctypes.c_int(); c.cuDeviceGetCount(ctypes.byref(n)); v=ctypes.c_int(); c.cuDriverGetVersion(ctypes.byref(v))
+print('인식됨' if rc==0 and n.value>0 else '안 됨 (cuInit %d)'%rc, '— 장치 %d개, 드라이버 CUDA %d.%d'%(n.value,v.value//1000,v.value%1000//10))\"" 2>&1 | grep -v '^\[entrypoint\]'
+}
+
+models_build() {
+  dev_ready models
+  [ $# -gt 0 ] || die "rover models build <대상>...   대상: $MODEL_TARGETS  (전부: all)"
+  [ "$1" = all ] && set -- $MODEL_TARGETS
+  real_running && die "주행 스택이 떠 있다 — 엔진 빌드는 CPU·메모리를 많이 쓴다. rover real down 뒤에"
+  local t spec dir cmd log t0 rc
+  for t in "$@"; do model_target "$t" >/dev/null || die "모르는 대상: $t  (대상: $MODEL_TARGETS)"; done
+  mkdir -p "$MODELS_HOST/.rover_engines"
+  for t in "$@"; do   # 하나씩 — 동시에 빌드하면 메모리가 모자랄 수 있다
+    spec="$(model_target "$t")"; dir="${spec%%|*}"; cmd="${spec#*|}"; log="/tmp/models_build_${t//\//_}.log"
+    [ -d "$MODELS_HOST/$dir" ] || die "모델 없음: $dir — 먼저 rover models fetch $dir"
+    printf "${B}models build${N} %s  (엔진이 이미 맞으면 몇 초, 새로 만들면 몇 분)\n" "$t"
+    t0=$(date +%s); rc=0
+    docker exec "$DEV" /docker-entrypoint.sh bash -c "$DEV_SRC && timeout 3600 ros2 launch $cmd build_only:=true > $log 2>&1" >/dev/null 2>&1 || rc=$?
+    if [ $rc = 0 ] && ! docker exec "$DEV" grep -q "process has died\|Failed to\|\[ERROR\]" "$log"; then
+      printf '%s\n%s, %s초\n' "$(models_sig)" "$(date '+%F %H:%M')" "$(( $(date +%s) - t0 ))" > "$(models_stamp "$t")"
+      ok "$t" "$(( $(date +%s) - t0 ))초"
+    else
+      rm -f "$(models_stamp "$t")"
+      bad "$t 실패 (종료 코드 $rc)" "docker exec $DEV tail -30 $log"
+      docker exec "$DEV" bash -c "grep -m3 'process has died\|Failed to\|\[ERROR\]' $log | cut -c1-200" | sed 's/^/    /' || true
+    fi
+  done
+}
+
+cmd_models() {
+  case "${1:-}" in
+    check) models_check;;
+    fetch) shift; python3 "$ROOT/tools/models.py" fetch "$@";;
+    build) shift; models_build "$@";;
+    *) die "rover models check | fetch <이름>...|all | build <대상>...|all";;
+  esac
+}
+
 cmd_real() {
   case "${1:-}" in
     up) shift; real_up "$@";; down) real_down;; check) real_check;; stop) real_stop;;
@@ -379,6 +450,7 @@ case "${1:-}" in
   psim) case "${2:-}" in up|restart|watch) gate;; esac;;
   shell) gate;;
   real) case "${2:-}" in up|rviz) gate;; esac;;
+  models) case "${2:-}" in build) gate;; esac;;
 esac
 
 case "${1:-}" in
@@ -388,6 +460,7 @@ case "${1:-}" in
   doctor) shift; exec bash "$ROOT/tools/doctor.sh" "$@";;
   setup)  shift; exec bash "$ROOT/tools/doctor.sh" --fix "$@";;
   real)  shift; cmd_real "$@";;
+  models) shift; cmd_models "$@";;
   carla|dds) die "rover $1: 아직 없음 (ST-2 때 채움)";;
-  *) sed -n '2,18p' "$0";;
+  *) sed -n '2,21p' "$0";;
 esac
