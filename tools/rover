@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # rover — autoware.rtst_rover 워크스페이스 실험용 CLI
 #   rover build [pkg ...]            우리 패키지 오버레이 빌드 (컨테이너, --packages-select). 인자 없으면 전부
+#                                    [로버] 없는 것을 먼저 만든다: 플랫폼 라이브러리(platforms/) · 개발 컨테이너 · apt 의존
 #   rover psim up [launch_arg ...]   planning_simulator 기동 (RViz 포함). preset 기본 rover — upstream 원본은 planning_module_preset:=default
 #   rover psim down | restart        종료 / 재기동 (yaml·xacro 고친 뒤)
 #   rover psim logs [-f]             [ERROR]·죽은 프로세스·route 실패만 추림. -f 는 원본 follow
@@ -138,18 +139,79 @@ cmd_shell() { running || die "psim 미실행 — rover psim up"; docker exec -it
 # ── 실차 ────────────────────────────────────────────────────────────────────────────────────
 # 로버에서는 개발 컨테이너 하나를 계속 쓴다: 드라이버가 쓰는 apt 패키지(robot_localization, imu_filter_madgwick,
 # laser_filters — rosdep install 로 설치)가 이미지에는 없고 그 컨테이너에만 있다. 우리 이미지를 만들면 psim 처럼 docker run 으로 바꾼다.
+#   컨테이너를 만드는 것은 rover build 뿐이다 (dev_create). 다른 명령은 없으면 "먼저 rover build" 라고 하고 멈춘다.
 DEV=rtst_rover_dev
 DEV_WS=/home/aw/autoware                 # 컨테이너 안 워크스페이스 경로. 빌드 산출물의 절대 경로가 이 기준이라 /ws 로 못 바꾼다
 DEV_MAPS=/home/aw/autoware_data/maps     # 지도는 마운트가 아니라 복사해 넣는다 (컨테이너가 지도 마운트 없이 만들어짐)
+DEV_MODELS=/home/aw/autoware_data/ml_models   # 인지 모델(.onnx)과 엔진(.engine) — 호스트 ~/autoware_data/ml_models 를 마운트
 DEV_DDS=/tmp/rover_cyclonedds.xml        # real up 이 만드는 DDS 설정. real 의 다른 명령도 전부 이 설정으로 실행
-DEV_SRC="cd $DEV_WS && source /opt/autoware/setup.bash && source install/setup.bash"
+DEV_DEPS_MARK=/opt/.rover_deps_done      # rosdep install 을 끝낸 컨테이너라는 표시 (컨테이너 안)
+DEV_SRC=""                               # 컨테이너 안 ROS 환경 — platform_load 가 채운다
 PKGS_ROVER="ros_robot_controller_msgs ros_robot_controller controller rtst_rover_base_bringup rtst_rover_vehicle_interface rtst_rover_odometry_localizer sclidar_ros2 imu_calib deptrum-ros-driver-aurora930 rtst_rover_sensor_bringup"
 RVIZ=rover_rviz
 
+# 플랫폼(보드 + OS 판)마다 다른 GPU 구성은 platforms/<이름>/ 에 있다. 지금 기계에 맞는 것을 골라 값을 읽는다.
+PLATFORM_NAME=""
+platform_load() {
+  [ -z "$PLATFORM_NAME" ] || return 0
+  local name; name="$(bash "$ROOT/platforms/detect.sh")" || exit 1
+  PLATFORM_DIR="$ROOT/platforms/$name"
+  # shellcheck source=/dev/null
+  . "$PLATFORM_DIR/platform.env"
+  PLATFORM_OVERLAY_SO="$PLATFORM_HOST_DIR/ws/install/autoware_tensorrt_common/lib/libautoware_tensorrt_common.so"
+  # 순서: 이미지의 Autoware → 우리 패키지 → 플랫폼 오버레이(다시 빌드한 Autoware 패키지가 이미지 것을 가린다)
+  #       → 라이브러리 경로 맨 앞에 호환 드라이버 · 얹은 TensorRT
+  DEV_SRC="cd $DEV_WS && source /opt/autoware/setup.bash && source install/setup.bash && source $PLATFORM_MOUNT/ws/install/setup.bash && export LD_LIBRARY_PATH=$PLATFORM_LD_PREPEND:\$LD_LIBRARY_PATH"
+}
+
+dev_exists()   { docker ps -a --format '{{.Names}}' | grep -qx "$DEV"; }
+dev_running()  { docker ps --format '{{.Names}}' | grep -qx "$DEV"; }
+# 컨테이너가 지금 pin 이미지로 만든 것인가 (pin 을 바꾼 뒤 옛 컨테이너를 그대로 쓰는 것을 막는다)
+dev_image_ok() { [ "$(docker inspect -f '{{.Image}}' "$DEV")" = "$(docker image inspect -f '{{.Id}}' "$IMAGE" 2>/dev/null)" ]; }
+dev_image_die() { die "컨테이너 $DEV 가 pin 이미지($IMAGE)로 만든 것이 아니다: $(docker inspect -f '{{.Config.Image}}' "$DEV")
+  옛 컨테이너를 남기려면  docker rename $DEV ${DEV}_old   (버리려면 docker rm $DEV)  → 그 뒤 rover build"; }
+
 dev_ready() {
   is_rover || die "이 명령은 로버(arm64)에서만: rover real $1"
-  docker ps -a --format '{{.Names}}' | grep -qx "$DEV" || die "개발 컨테이너 $DEV 없음"
-  docker ps --format '{{.Names}}' | grep -qx "$DEV" || { docker start "$DEV" >/dev/null; sleep 2; ok "컨테이너 $DEV 시작"; }
+  platform_load
+  dev_exists || die "개발 컨테이너 $DEV 없음 — 먼저 rover build (컨테이너를 만들고 빌드까지 한다)"
+  dev_image_ok || dev_image_die
+  [ -f "$PLATFORM_OVERLAY_SO" ] || die "플랫폼($PLATFORM_NAME) 오버레이 없음 — 먼저 rover build"
+  [ -f "$ROOT/install/setup.bash" ] || die "install/ 없음 — 먼저 rover build"
+  dev_running || { docker start "$DEV" >/dev/null; sleep 2; ok "컨테이너 $DEV 시작"; }
+}
+
+# 개발 컨테이너를 pin 이미지로 만든다 (rover build 만 부른다).
+#   GPU 옵션 · 플랫폼 폴더 마운트 = platforms/<이름>/platform.env,  장치 = MCU 보드(/dev/rrc) · 2D 라이다(/dev/lidar) · USB 전체(카메라)
+dev_create() {
+  local rrc lidar
+  rrc="$(readlink -f /dev/rrc 2>/dev/null || true)"; lidar="$(readlink -f /dev/lidar 2>/dev/null || true)"
+  [ -c "$rrc" ]   || die "/dev/rrc 없음 — 컨테이너를 만들 때는 MCU 보드 USB 가 꽂혀 있어야 한다 (장치를 컨테이너에 넘긴다)"
+  [ -c "$lidar" ] || die "/dev/lidar 없음 — 컨테이너를 만들 때는 2D 라이다 USB 가 꽂혀 있어야 한다"
+  docker image inspect "$IMAGE" >/dev/null 2>&1 || die "이미지 없음: $IMAGE — docker pull $IMAGE"
+  mkdir -p "$HOME/autoware_data/ml_models"
+  # --cap-add=NET_ADMIN: 엔트리포인트가 lo 에 multicast 를 켠다.  c 189:* = USB 장치(뎁스 카메라)
+  # shellcheck disable=SC2086
+  docker run -d --name "$DEV" --network host --cap-add=NET_ADMIN $PLATFORM_DOCKER_GPU_ARGS \
+    -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" -v "$ROOT:$DEV_WS" -w "$DEV_WS" \
+    -v "$PLATFORM_HOST_DIR:$PLATFORM_MOUNT:ro" -v "$HOME/autoware_data/ml_models:$DEV_MODELS" \
+    -v /dev/bus/usb:/dev/bus/usb --device-cgroup-rule 'c 189:* rmw' \
+    --device "$rrc:/dev/rrc" --device "$lidar:/dev/lidar" \
+    "$IMAGE" sleep infinity >/dev/null
+  ok "컨테이너 $DEV 만듦" "$IMAGE, 플랫폼 $PLATFORM_NAME"
+}
+
+# 드라이버 패키지가 package.xml 에 적어 둔 apt 의존을 컨테이너에 설치한다 (한 번). 이미지에 없는 것만 깔린다.
+dev_deps() {
+  docker exec "$DEV" test -f "$DEV_DEPS_MARK" && return 0
+  printf "  apt 의존 설치 (rosdep install — 처음 한 번, 몇 분)\n"
+  docker exec "$DEV" /docker-entrypoint.sh bash -c "set -e
+    cd $DEV_WS && source /opt/autoware/setup.bash
+    sudo apt-get update -qq
+    rosdep update --rosdistro \$ROS_DISTRO >/dev/null
+    rosdep install --from-paths src/vehicle/external src/sensor_component/external --ignore-src -y -r --rosdistro \$ROS_DISTRO
+    sudo touch $DEV_DEPS_MARK" 2>&1 | grep -v '^\[entrypoint\]' | grep -E '^(ERROR|E:|executing command|#All required)|Setting up ros-' | sed 's/^/    /' || true
+  docker exec "$DEV" test -f "$DEV_DEPS_MARK" || die "rosdep install 실패 — docker exec -it $DEV /docker-entrypoint.sh bash 로 들어가 직접 돌려 본다"
 }
 # 컨테이너 안에서 실행 (real up 이 정한 DDS 설정으로). dev_bg 는 백그라운드
 dev_exec() { docker exec -e CYCLONEDDS_URI="file://$DEV_DDS" "$DEV" /docker-entrypoint.sh bash -c "$DEV_SRC; $1" 2>&1 | grep -v '^\[entrypoint\]' || true; }
@@ -166,13 +228,31 @@ dds_file() {
   grep -q "NetworkInterface name=\"$ifname\"" "$out" || die "DDS 설정 생성 실패: $out"
 }
 
+# 로버의 rover build = 없는 것을 전부 만든다: ① 플랫폼 라이브러리·오버레이 ② 개발 컨테이너(+apt 의존) ③ 우리 패키지
 real_build() {
-  dev_ready build
-  local pkgs="${*:-$PKGS_DEFAULT $PKGS_ROVER}"
+  platform_load
+  local pkgs="${*:-$PKGS_DEFAULT $PKGS_ROVER}" img_id stamp="$ROOT/build/.rover_image"
+  # ① 플랫폼: NVIDIA 라이브러리 받기(fetch) + Autoware 패키지 일부 다시 빌드(build). 이미 있으면 건너뛴다
+  if [ ! -f "$PLATFORM_OVERLAY_SO" ]; then
+    printf "${B}platform${N} %s — 처음 한 번 (받기 약 2.3 GB)\n" "$PLATFORM_NAME"
+    bash "$PLATFORM_DIR/fetch.sh"; bash "$PLATFORM_DIR/build.sh"
+  fi
+  # ② 컨테이너
+  if dev_exists; then dev_image_ok || dev_image_die; else dev_create; fi
+  dev_running || { docker start "$DEV" >/dev/null; sleep 2; ok "컨테이너 $DEV 시작"; }
+  dev_deps
+  # ③ 우리 패키지. build/ 는 만든 이미지에 묶인다(컴파일러 경로가 CMake 캐시에 남는다) → 다른 이미지의 것이면 멈춘다
+  img_id="$(docker image inspect -f '{{.Id}}' "$IMAGE")"
+  if [ -d "$ROOT/build" ] && [ "$(cat "$stamp" 2>/dev/null)" != "$img_id" ]; then
+    die "build/ 가 지금 이미지로 만든 것이 아니다 — $ROOT 의 build/ install/ log/ 를 지우거나 다른 이름으로 옮긴 뒤 다시 rover build"
+  fi
   printf "${B}build${N} (컨테이너 %s) %s\n" "$DEV" "$pkgs"
-  docker exec "$DEV" /docker-entrypoint.sh bash -c "cd $DEV_WS && source /opt/autoware/setup.bash; [ -f install/setup.bash ] && source install/setup.bash
+  docker exec "$DEV" /docker-entrypoint.sh bash -c "set -o pipefail
+    cd $DEV_WS && source /opt/autoware/setup.bash; [ -f install/setup.bash ] && source install/setup.bash
     colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release --packages-select $pkgs 2>&1 \
-      | grep -v -e '^\[entrypoint\]' -e 'haven.t been built' -e '^- ' -e 'being used from' -e 'packages-ignore' -e 'suppress this warning'"
+      | grep -v -e '^\[entrypoint\]' -e 'haven.t been built' -e '^- ' -e 'being used from' -e 'packages-ignore' -e 'suppress this warning'" \
+    || die "빌드 실패"
+  echo "$img_id" > "$stamp"
 }
 
 real_up() {
@@ -309,5 +389,5 @@ case "${1:-}" in
   setup)  shift; exec bash "$ROOT/tools/doctor.sh" --fix "$@";;
   real)  shift; cmd_real "$@";;
   carla|dds) die "rover $1: 아직 없음 (ST-2 때 채움)";;
-  *) sed -n '2,17p' "$0";;
+  *) sed -n '2,18p' "$0";;
 esac
