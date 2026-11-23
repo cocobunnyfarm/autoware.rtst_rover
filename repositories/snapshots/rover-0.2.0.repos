@@ -1,0 +1,20 @@
+# 저장 지점 rover-0.2.0 (2026-11-22) — 로버 GPU 로 Autoware 인지가 돌 수 있는 구성 + 그 구성에서 AUTO 주행 확인.
+#   rover-0.1.0 뒤 바뀐 것은 이 repo(바깥 fork)뿐: platforms/jetson-orin-jetpack6, 로버 이미지 pin → universe-cuda-jazzy-2.0.0,
+#   rover build 가 플랫폼 준비·개발 컨테이너 생성, rover models check|fetch|build, rover real check 한 노드화.
+#   기준: upstream Autoware 2.0.0 (repositories/rtst_rover.pin), 로버 JetPack 6.2.3 (Jetson Linux R36.5), TensorRT 10.16.1 을 얹음
+#   되돌아가기: 이 repo 를 태그 rover-0.2.0 으로 받고
+#     vcs import src < repositories/snapshots/rover-0.2.0.repos
+#   각 repo 에도 같은 이름의 태그 rover-0.2.0 이 있다. 아래 version 은 그 태그가 가리키는 커밋이다 (셋 다 rover-0.1.0 과 같다).
+repositories:
+  launcher/autoware_launch.rtst_rover:
+    type: git
+    url: https://github.com/cocobunnyfarm/autoware_launch.rtst_rover
+    version: b31ec1b732cc449658d3efc38d0c6a16442f85b5
+  vehicle/external/rtst_rover_vehicle_interface:
+    type: git
+    url: git@github.com:cocobunnyfarm/rtst_rover_vehicle_interface.git
+    version: b2601c6e4609159a2a2c645754e33d850a479d1b
+  sensor_component/external/rtst_rover_sensor_drivers:
+    type: git
+    url: git@github.com:cocobunnyfarm/rtst_rover_sensor_drivers.git
+    version: 495bd7f81a0314074ccc7ff68660ebb6c1fab26a
